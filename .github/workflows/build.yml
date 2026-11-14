@@ -1,0 +1,85 @@
+name: Compilation VST3 (Windows + macOS)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Configurer (CMake + JUCE)
+        run: cmake -B build -A x64 -DIDGS_BUILD_TESTS=ON
+
+      - name: Compiler le VST3 et les tests
+        run: cmake --build build --config Release --target IDGemsSynth_VST3 IDGemsSynthTests --parallel
+
+      - name: Tests de stabilité (NaN, clics, plafond, Panic, CPU)
+        run: build\IDGemsSynthTests_artefacts\Release\IDGemsSynthTests.exe
+
+      - name: Validation pluginval (norme des hôtes VST3)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval
+          $p = Start-Process -FilePath pluginval\pluginval.exe -ArgumentList '--strictness-level 5 --validate-in-process --timeout-ms 600000 --validate "build\IDGemsSynth_artefacts\Release\VST3\IDGems Synth.vst3"' -NoNewWindow -Wait -PassThru
+          exit $p.ExitCode
+
+      - name: Préparer le paquet
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item -Recurse "build\IDGemsSynth_artefacts\Release\VST3\IDGems Synth.vst3" dist\
+          Copy-Item docs\INSTALLATION.md dist\ -ErrorAction SilentlyContinue
+
+      - name: Publier le VST3 (à télécharger)
+        uses: actions/upload-artifact@v4
+        with:
+          name: IDGems-Synth-VST3-Windows
+          path: dist
+          retention-days: 30
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Configurer (CMake + JUCE, binaire universel Intel + Apple Silicon)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DIDGS_BUILD_TESTS=ON "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+
+      - name: Compiler le VST3 et les tests
+        run: cmake --build build --config Release --target IDGemsSynth_VST3 IDGemsSynthTests --parallel 4
+
+      - name: Tests de stabilité (NaN, clics, plafond, Panic, CPU)
+        run: build/IDGemsSynthTests_artefacts/Release/IDGemsSynthTests
+
+      - name: Signature ad hoc (nécessaire pour qu'Ableton charge le plugin sur Mac)
+        run: codesign --force --deep --sign - "build/IDGemsSynth_artefacts/Release/VST3/IDGems Synth.vst3"
+
+      - name: Validation pluginval (norme des hôtes VST3)
+        run: |
+          curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          unzip -q pluginval.zip -d pluginval
+          pluginval/pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --validate-in-process --timeout-ms 600000 --validate "build/IDGemsSynth_artefacts/Release/VST3/IDGems Synth.vst3"
+
+      - name: Préparer le paquet (zip qui conserve les permissions et la signature)
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent "build/IDGemsSynth_artefacts/Release/VST3/IDGems Synth.vst3" "dist/IDGems Synth (macOS).zip"
+          cp docs/INSTALLATION.md dist/ || true
+
+      - name: Publier le VST3 (à télécharger)
+        uses: actions/upload-artifact@v4
+        with:
+          name: IDGems-Synth-VST3-macOS
+          path: dist
+          retention-days: 30

@@ -1,0 +1,345 @@
+#include "Widgets.h"
+#include "../Synth/Envelope.h"
+
+namespace idgs::ui
+{
+namespace
+{
+constexpr float startAngle = juce::MathConstants<float>::pi * 1.25f;
+constexpr float endAngle = juce::MathConstants<float>::pi * 2.75f;
+}
+
+// =============================================================================
+// Knob
+// =============================================================================
+Knob::Knob (IDGemsSynthProcessor& p, const juce::String& paramId, const juce::String& l, juce::Colour c)
+    : label (l), colour (c)
+{
+    param = p.apvts.getParameter (paramId);
+    setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    setRotaryParameters (startAngle, endAngle, true);
+    setVelocityBasedMode (false);
+    setMouseDragSensitivity (220);
+    att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (p.apvts, paramId, *this);
+    if (param != nullptr)
+        setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
+    const auto help = idgs::helpFor (paramId);
+    setTooltip (label + (help.isNotEmpty() ? "\n" + help : juce::String()) + IDG_T ("\nDouble-clic : valeur par défaut"));
+}
+
+void Knob::paint (juce::Graphics& g)
+{
+    if (param == nullptr) return;
+    auto bounds = getLocalBounds().toFloat();
+    const float labelH = 13.0f;
+    auto dialArea = bounds.withTrimmedBottom (labelH);
+    const float size = juce::jmin (dialArea.getWidth(), dialArea.getHeight()) - 4.0f;
+    auto dial = juce::Rectangle<float> (size, size).withCentre (dialArea.getCentre());
+    const auto centre = dial.getCentre();
+    const float radius = size * 0.5f;
+    const float alpha = isEnabled() ? 1.0f : 0.35f;
+    const float norm = param->getValue();
+    auto angleOf = [] (float n) { return startAngle + juce::jlimit (0.0f, 1.0f, n) * (endAngle - startAngle); };
+
+    auto arc = [&] (float r, float a0, float a1, juce::Colour col, float thick)
+    {
+        juce::Path pth;
+        pth.addCentredArc (centre.x, centre.y, r, r, 0.0f, juce::jmin (a0, a1), juce::jmax (a0, a1), true);
+        g.setColour (col);
+        g.strokePath (pth, juce::PathStrokeType (thick, juce::PathStrokeType::curved, juce::PathStrokeType::butt));
+    };
+
+    const auto range = param->getNormalisableRange();
+    const bool bipolar = range.start < 0.0f && range.end > 0.0f;
+    const float zeroN = bipolar ? param->convertTo0to1 (0.0f) : 0.0f;
+    const float ringR = radius - 3.0f;
+
+    // rail éteint
+    arc (ringR, startAngle, endAngle, Theme::line.withAlpha (0.9f * alpha), 2.0f);
+    // tube néon : plus la valeur est forte, plus il bloome
+    {
+        const float amount = bipolar ? std::abs (norm - zeroN) / juce::jmax (zeroN, 1.0f - zeroN) : norm;
+        const float intensity = juce::jlimit (0.0f, 1.0f, amount);
+        const float bloom = (0.2f + 0.8f * intensity) * alpha;
+        const float a0 = bipolar ? angleOf (zeroN) : startAngle, a1 = angleOf (norm);
+        if (std::abs (a1 - a0) > 0.01f)
+        {
+            const float spread = 2.0f + 7.0f * intensity;
+            for (int k = 4; k >= 1; --k)
+                arc (ringR, a0, a1, colour.withAlpha (bloom * 0.11f * (float) (5 - k) / 4.0f), 3.0f + spread * (float) k * 0.55f);
+            arc (ringR, a0, a1, colour.withAlpha (juce::jmin (1.0f, 0.75f + 0.25f * bloom) * alpha), 3.2f);
+            arc (ringR, a0, a1, colour.interpolatedWith (juce::Colours::white, 0.35f + 0.45f * intensity).withAlpha ((0.5f + 0.5f * bloom) * alpha), 1.2f);
+            const float ae = a1 - juce::MathConstants<float>::halfPi;
+            const juce::Point<float> tip { centre.x + std::cos (ae) * ringR, centre.y + std::sin (ae) * ringR };
+            const float gs = 5.0f + 9.0f * intensity;
+            g.setColour (colour.withAlpha (bloom * 0.35f));
+            g.fillEllipse (juce::Rectangle<float> (gs, gs).withCentre (tip));
+            g.setColour (juce::Colours::white.withAlpha ((0.6f + 0.4f * bloom) * alpha));
+            g.fillEllipse (juce::Rectangle<float> (3.0f, 3.0f).withCentre (tip));
+        }
+    }
+
+    // corps octogonal
+    auto body = dial.reduced (size * 0.25f);
+    juce::Path oct;
+    for (int i = 0; i < 8; ++i)
+    {
+        const float a = juce::MathConstants<float>::pi * (0.125f + (float) i * 0.25f);
+        juce::Point<float> pt { centre.x + std::cos (a) * body.getWidth() * 0.52f, centre.y + std::sin (a) * body.getWidth() * 0.52f };
+        if (i == 0) oct.startNewSubPath (pt); else oct.lineTo (pt);
+    }
+    oct.closeSubPath();
+    g.setColour (Theme::panelHi.withAlpha (alpha));
+    g.fillPath (oct);
+    g.setColour (Theme::line.brighter (0.35f).withAlpha (alpha));
+    g.strokePath (oct, juce::PathStrokeType (1.0f));
+    {
+        const float a = angleOf (norm) - juce::MathConstants<float>::halfPi;
+        const float r0 = body.getWidth() * 0.12f, r1 = body.getWidth() * 0.5f;
+        g.setColour (colour.withAlpha (alpha));
+        g.drawLine (centre.x + std::cos (a) * r0, centre.y + std::sin (a) * r0, centre.x + std::cos (a) * r1, centre.y + std::sin (a) * r1, 2.2f);
+    }
+
+    // libellé / valeur
+    auto lab = bounds.removeFromBottom (labelH);
+    const bool showValue = hovering || isMouseButtonDown();
+    g.setFont (Theme::mono (10.0f, isMouseButtonDown()));
+    g.setColour ((showValue ? colour : Theme::textDim).withAlpha (alpha));
+    g.drawFittedText (showValue ? param->getCurrentValueAsText() : label.toUpperCase(), lab.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+}
+
+// =============================================================================
+// ParamToggle / ParamCombo
+// =============================================================================
+ParamToggle::ParamToggle (IDGemsSynthProcessor& p, const juce::String& id, const juce::String& caption, juce::Colour on)
+{
+    setButtonText (caption);
+    setClickingTogglesState (true);
+    setColour (juce::TextButton::buttonOnColourId, on);
+    att = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (p.apvts, id, *this);
+    setTooltip (idgs::helpFor (id));
+}
+
+ParamCombo::ParamCombo (IDGemsSynthProcessor& p, const juce::String& id)
+{
+    if (auto* c = dynamic_cast<juce::AudioParameterChoice*> (p.apvts.getParameter (id)))
+        addItemList (c->choices, 1);
+    att = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (p.apvts, id, *this);
+    setTooltip (idgs::helpFor (id));
+}
+
+// =============================================================================
+// Meter
+// =============================================================================
+void Meter::tick()
+{
+    for (int c = 0; c < 2; ++c)
+    {
+        const float v = proc.meterOut[c].exchange (0.0f);
+        level[c] = juce::jmax (v, level[c] * 0.85f);
+        if (v >= peakHold[c]) { peakHold[c] = v; holdTime[c] = 30; }
+        else if (--holdTime[c] <= 0) peakHold[c] *= 0.95f;
+    }
+    gr = juce::jmin (proc.meterGR.exchange (1.0f), gr + (1.0f - gr) * 0.2f);
+    repaint();
+}
+
+void Meter::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    auto toY = [&] (float lin)
+    {
+        const float db = idg::dsp::gainToDb (lin);
+        const float n = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
+        return r.getBottom() - n * r.getHeight();
+    };
+    const float w = (r.getWidth() - 8.0f) / 3.0f;
+    for (int c = 0; c < 2; ++c)
+    {
+        auto bar = juce::Rectangle<float> (r.getX() + (float) c * (w + 2.0f), r.getY(), w, r.getHeight());
+        g.setColour (Theme::panelHi);
+        g.fillRect (bar);
+        const float y = toY (level[c]);
+        juce::ColourGradient grad (Theme::blue, 0.0f, bar.getBottom(), Theme::red, 0.0f, bar.getY(), false);
+        grad.addColour (0.75, Theme::accent);
+        g.setGradientFill (grad);
+        g.fillRect (bar.withTop (y));
+        g.setColour (Theme::text);
+        g.fillRect (bar.getX(), toY (peakHold[c]), bar.getWidth(), 1.5f);
+    }
+    // réduction de gain du limiteur (descend du haut)
+    auto grBar = juce::Rectangle<float> (r.getRight() - w, r.getY(), w, r.getHeight());
+    g.setColour (Theme::panelHi);
+    g.fillRect (grBar);
+    const float grDb = -idg::dsp::gainToDb (gr);
+    g.setColour (Theme::red);
+    g.fillRect (grBar.withHeight (juce::jlimit (0.0f, 1.0f, grDb / 12.0f) * grBar.getHeight()));
+}
+
+// =============================================================================
+// WavetableView
+// =============================================================================
+void WavetableView::tick()
+{
+    const int t = (int) proc.getValue (P::oscATable);
+    const float pos = proc.getValue (P::oscAPos);
+    if (t != lastTable || std::abs (pos - lastPos) > 1.0e-4f)
+    {
+        lastTable = t;
+        lastPos = pos;
+        repaint();
+    }
+}
+
+void WavetableView::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (4.0f);
+    g.setColour (Theme::bg.withAlpha (0.6f));
+    g.fillRect (r);
+    const auto& wt = WavetableBank::get()[lastTable < 0 ? 0 : lastTable];
+    const int frames = wt.getNumFrames();
+    const float pos = juce::jmax (0.0f, lastPos);
+    constexpr int pts = 128;
+    const float depthX = r.getWidth() * 0.18f, depthY = r.getHeight() * 0.32f;
+    auto plot = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + depthY, r.getWidth() - depthX - 8.0f, r.getHeight() - depthY - 6.0f);
+
+    auto pathFor = [&] (float framePos, float offset)
+    {
+        juce::Path p;
+        for (int i = 0; i <= pts; ++i)
+        {
+            const float ph = (float) i / (float) pts;
+            const float v = wt.readMorph (framePos, 2, ph);
+            const float x = plot.getX() + ph * plot.getWidth() + offset * depthX;
+            const float y = plot.getCentreY() - v * plot.getHeight() * 0.45f - offset * depthY;
+            if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+        }
+        return p;
+    };
+
+    // frames empilées en perspective (du fond vers l'avant)
+    for (int f = frames - 1; f >= 0; --f)
+    {
+        const float fp = frames > 1 ? (float) f / (float) (frames - 1) : 0.0f;
+        g.setColour (Theme::blue.withAlpha (0.10f + 0.08f * (1.0f - std::abs (fp - pos))));
+        g.strokePath (pathFor (fp, fp), juce::PathStrokeType (1.0f));
+    }
+    // frame courante : néon orange avec aberration chromatique
+    auto cur = pathFor (pos, pos);
+    g.setColour (juce::Colour (0xffff1e3c).withAlpha (0.45f));
+    g.strokePath (cur, juce::PathStrokeType (1.4f), juce::AffineTransform::translation (-1.5f, 0.0f));
+    g.setColour (Theme::blue.withAlpha (0.45f));
+    g.strokePath (cur, juce::PathStrokeType (1.4f), juce::AffineTransform::translation (1.5f, 0.4f));
+    g.setColour (Theme::accent.withAlpha (0.3f));
+    g.strokePath (cur, juce::PathStrokeType (5.0f));
+    g.setColour (Theme::accent.brighter (0.3f));
+    g.strokePath (cur, juce::PathStrokeType (1.8f));
+
+    g.setFont (Theme::mono (10.0f, true));
+    g.setColour (Theme::textDim);
+    g.drawText (wt.getName().toUpperCase() + "  ·  " + juce::String (frames) + " FRAMES  ·  " + juce::String (juce::roundToInt (pos * 100.0f)) + " %",
+                r.reduced (6.0f, 3.0f), juce::Justification::topLeft);
+}
+
+// =============================================================================
+// EnvelopeView
+// =============================================================================
+void EnvelopeView::tick()
+{
+    float h = 0.0f;
+    int k = 1;
+    for (auto* id : { P::env1Delay, P::env1Attack, P::env1Hold, P::env1Decay, P::env1Sustain, P::env1Release, P::env1ACurve, P::env1DCurve, P::env1RCurve })
+        h += proc.getValue (id) * (float) (k++ * 31);
+    if (std::abs (h - lastHash) > 1.0e-6f) { lastHash = h; repaint(); }
+}
+
+void EnvelopeView::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (4.0f);
+    g.setColour (Theme::bg.withAlpha (0.6f));
+    g.fillRect (r);
+    auto plot = r.reduced (8.0f, 10.0f);
+
+    const float d = proc.getValue (P::env1Delay), a = juce::jmax (Envelope::minAttackMs, proc.getValue (P::env1Attack)),
+                h = proc.getValue (P::env1Hold), dc = juce::jmax (Envelope::minAttackMs, proc.getValue (P::env1Decay)),
+                s = proc.getValue (P::env1Sustain), rl = juce::jmax (Envelope::minReleaseMs, proc.getValue (P::env1Release));
+    const float ac = proc.getValue (P::env1ACurve), dcv = proc.getValue (P::env1DCurve), rc = proc.getValue (P::env1RCurve);
+
+    // échelle temporelle compressée (racine) pour que les temps courts restent lisibles
+    auto w = [] (float ms) { return std::sqrt (juce::jmax (0.0f, ms)); };
+    const float sustainW = juce::jmax (w (a) + w (dc), 20.0f) * 0.35f;
+    const float total = w (d) + w (a) + w (h) + w (dc) + sustainW + w (rl);
+    const float px = plot.getWidth() / juce::jmax (1.0f, total);
+    auto Y = [&] (float lvl) { return plot.getBottom() - lvl * plot.getHeight(); };
+
+    juce::Path p;
+    float x = plot.getX();
+    p.startNewSubPath (x, Y (0));
+    x += w (d) * px; p.lineTo (x, Y (0));
+    const float x0 = x, aw = w (a) * px;
+    for (int i = 1; i <= 32; ++i) { const float t = (float) i / 32.0f; p.lineTo (x0 + t * aw, Y (Envelope::shape (t, ac))); }
+    x += aw;
+    x += w (h) * px; p.lineTo (x, Y (1));
+    const float x1 = x, dw = w (dc) * px;
+    for (int i = 1; i <= 32; ++i) { const float t = (float) i / 32.0f; p.lineTo (x1 + t * dw, Y (1.0f + (s - 1.0f) * (1.0f - Envelope::shape (1.0f - t, -dcv)))); }
+    x += dw;
+    x += sustainW * px; p.lineTo (x, Y (s));
+    const float x2 = x, rw = w (rl) * px;
+    for (int i = 1; i <= 32; ++i) { const float t = (float) i / 32.0f; p.lineTo (x2 + t * rw, Y (s * Envelope::shape (1.0f - t, -rc))); }
+
+    juce::Path fill (p);
+    fill.lineTo (plot.getRight(), Y (0));
+    fill.closeSubPath();
+    g.setGradientFill (juce::ColourGradient (Theme::accent.withAlpha (0.28f), 0.0f, plot.getY(), Theme::accent.withAlpha (0.0f), 0.0f, plot.getBottom(), false));
+    g.fillPath (fill);
+    g.setColour (Theme::accent.withAlpha (0.3f));
+    g.strokePath (p, juce::PathStrokeType (5.0f));
+    g.setColour (Theme::accent.brighter (0.3f));
+    g.strokePath (p, juce::PathStrokeType (1.6f));
+
+    // repère de fin de sustain (relâchement de la note)
+    g.setColour (Theme::blue.withAlpha (0.6f));
+    g.drawVerticalLine ((int) x2, plot.getY(), plot.getBottom());
+    g.setFont (Theme::mono (9.0f));
+    g.drawText ("NOTE OFF", juce::Rectangle<float> (x2 + 3.0f, plot.getY() - 8.0f, 60.0f, 10.0f), juce::Justification::left);
+}
+
+// =============================================================================
+// Scope
+// =============================================================================
+void Scope::tick()
+{
+    int s1, n1, s2, n2;
+    const int avail = proc.scopeFifo.getNumReady();
+    proc.scopeFifo.prepareToRead (avail, s1, n1, s2, n2);
+    auto push = [this] (float v) { buf[(size_t) writePos] = v; writePos = (writePos + 1) % (int) buf.size(); };
+    // décimation simple pour couvrir ~50 ms
+    for (int i = 0; i < n1; i += 4) push (proc.scopeData[(size_t) (s1 + i)]);
+    for (int i = 0; i < n2; i += 4) push (proc.scopeData[(size_t) (s2 + i)]);
+    proc.scopeFifo.finishedRead (n1 + n2);
+    repaint();
+}
+
+void Scope::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour (Theme::bg.withAlpha (0.7f));
+    g.fillRect (r);
+    g.setColour (Theme::line);
+    g.drawHorizontalLine ((int) r.getCentreY(), r.getX(), r.getRight());
+    juce::Path p;
+    const int n = (int) buf.size();
+    for (int i = 0; i < n; ++i)
+    {
+        const float v = juce::jlimit (-1.0f, 1.0f, buf[(size_t) ((writePos + i) % n)]);
+        const float x = r.getX() + (float) i / (float) (n - 1) * r.getWidth();
+        const float y = r.getCentreY() - v * r.getHeight() * 0.48f;
+        if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+    }
+    g.setColour (Theme::blue.withAlpha (0.35f));
+    g.strokePath (p, juce::PathStrokeType (1.0f), juce::AffineTransform::translation (1.2f, 0.0f));
+    g.setColour (Theme::accent);
+    g.strokePath (p, juce::PathStrokeType (1.2f));
+}
+} // namespace idgs::ui
