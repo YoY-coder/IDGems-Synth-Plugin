@@ -117,7 +117,7 @@ private:
     void startVoice (int note, float vel, const VoiceParams& p, float from, bool glide, int maxV);
     void removeHeld (int note);
 
-    std::array<Voice, MaxVoices> voices;
+    std::vector<Voice> voices = std::vector<Voice> ((size_t) MaxVoices); // sur le tas (~1 Mo) : jamais sur la pile
     idg::dsp::Rng rng;
     uint64_t ageCounter = 0;
     float bend = 0.0f; // -1..1
