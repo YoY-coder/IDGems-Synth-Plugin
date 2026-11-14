@@ -102,7 +102,7 @@ struct IDGemsSynthEditor::Content : public juce::Component
         g.setColour (Theme::accent.withAlpha (0.5f));
         g.fillRect (0.0f, (float) topH - 1.0f, (float) getWidth(), 1.0f);
         Theme::cutText (g, "IDGEMS", { 16.0f, 10.0f, 150.0f, 36.0f }, 24.0f, Theme::accent, juce::Justification::centredLeft, 0.6f, true);
-        Theme::glitchText (g, "SYNTH", { 168.0f, 14.0f, 80.0f, 28.0f }, juce::Justification::centredLeft, Theme::blue, 1.4f);
+        Theme::cutText (g, "SYNTH", { 136.0f, 10.0f, 130.0f, 36.0f }, 24.0f, Theme::blue, juce::Justification::centredLeft, 0.0f, true);
 
         // infos moteur
         g.setFont (Theme::mono (10.5f));
@@ -115,8 +115,8 @@ struct IDGemsSynthEditor::Content : public juce::Component
     {
         auto r = getLocalBounds();
         auto top = r.removeFromTop (topH);
-        top.removeFromLeft (260);
-        for (auto* t : tabs) t->setBounds (top.removeFromLeft (t->getButtonText().length() > 6 ? 118 : 84).reduced (3, 14));
+        top.removeFromLeft (270);
+        for (auto* t : tabs) t->setBounds (top.removeFromLeft (t->getButtonText().length() > 6 ? 112 : 76).reduced (3, 14));
         top.removeFromRight (10);
         meter.setBounds (top.removeFromRight (34).reduced (0, 8));
         top.removeFromRight (6);
@@ -125,8 +125,8 @@ struct IDGemsSynthEditor::Content : public juce::Component
         top.removeFromRight (8);
         panicBtn.setBounds (top.removeFromRight (70).reduced (0, 15));
         top.removeFromRight (8);
-        scope.setBounds (top.removeFromRight (150).reduced (0, 9));
-        infoArea = top.removeFromRight (150).reduced (4, 0);
+        scope.setBounds (top.removeFromRight (130).reduced (0, 9));
+        infoArea = top.removeFromRight (140).reduced (4, 0);
 
         keyboard.setBounds (r.removeFromBottom (86).reduced (12, 6));
         for (auto* pg : pages) pg->setBounds (r);
