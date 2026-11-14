@@ -15,6 +15,7 @@ public:
     void paint (juce::Graphics&) override;
     void mouseEnter (const juce::MouseEvent&) override { hovering = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override { hovering = false; repaint(); }
+    void setLabel (const juce::String& l) { label = l; repaint(); }
 
 private:
     juce::RangedAudioParameter* param = nullptr;
@@ -58,18 +59,29 @@ private:
     int holdTime[2] {};
 };
 
-/** Affichage de la wavetable : frames empilées en perspective, frame courante en surbrillance. */
-class WavetableView : public juce::Component
+/** Affichage d'un oscillateur : wavetable (frames empilées en perspective, frame courante en
+    surbrillance) ou forme d'onde du sample (point de départ, zones du multisample). */
+class OscDisplay : public juce::Component
 {
 public:
-    explicit WavetableView (IDGemsSynthProcessor& p) : proc (p) {}
+    OscDisplay (IDGemsSynthProcessor& p, int oscIndex) : proc (p), osc (oscIndex) {}
     void tick();
     void paint (juce::Graphics&) override;
+    void setDropHover (bool h) { dropHover = h; repaint(); }
+    void setMessage (const juce::String& m) { message = m; messageTime = juce::Time::getMillisecondCounter(); repaint(); }
 
 private:
+    void paintTable (juce::Graphics&, juce::Rectangle<float>);
+    void paintSample (juce::Graphics&, juce::Rectangle<float>);
+
     IDGemsSynthProcessor& proc;
-    int lastTable = -1;
+    int osc;
+    int lastTable = -1, lastMode = -1, lastVersion = -1;
     float lastPos = -1.0f;
+    bool dropHover = false;
+    juce::String message;
+    juce::uint32 messageTime = 0;
+    std::vector<float> overview; // crêtes du sample (mise en cache)
 };
 
 /** Courbe de l'enveloppe 1 (DAHDSR + courbes). */

@@ -15,6 +15,8 @@ public:
     static constexpr int Size = 2048;           // échantillons par cycle
     static constexpr int MaxHarmonics = Size / 2;
     static constexpr int NumMips = 11;          // 1024, 512, ... 1 harmonique
+    static constexpr int NumPartials = 64;      // harmoniques gardées pour la synthèse additive (inharmonicité)
+    static constexpr int MaxFrames = 256;
 
     /** Spectre d'une frame : pour chaque harmonique k (1..1024), coefficients cosinus (a) et sinus (b). */
     struct Spectrum
@@ -26,6 +28,13 @@ public:
     Wavetable() = default;
     Wavetable (const juce::String& name, const std::vector<Spectrum>& frames);
 
+    /** Table construite à partir de cycles bruts (Size échantillons par frame, mis bout à bout). */
+    static std::unique_ptr<Wavetable> fromFrames (const juce::String& name, const std::vector<float>& cycles);
+    /** Découpe automatique d'un sample en frames (détection de période, sinon fenêtres fixes). */
+    static std::unique_ptr<Wavetable> fromSample (const juce::String& name, const float* mono, int numSamples);
+    /** Wavetable aléatoire (bouton dé) : formes, harmoniques, bruit, nombre de frames tirés au sort. */
+    static std::unique_ptr<Wavetable> random (uint32_t seed);
+
     const juce::String& getName() const { return name; }
     int getNumFrames() const { return numFrames; }
 
@@ -34,6 +43,10 @@ public:
     {
         return data.data() + ((size_t) frame * NumMips + (size_t) mip) * (size_t) (Size + 1);
     }
+
+    /** Amplitude et phase de l'harmonique k (1..NumPartials) d'une frame, après normalisation. */
+    float partialAmp (int frame, int k) const { return pAmp[(size_t) frame * NumPartials + (size_t) (k - 1)]; }
+    float partialPhase (int frame, int k) const { return pPhase[(size_t) frame * NumPartials + (size_t) (k - 1)]; }
 
     /** Version à utiliser pour un incrément de phase donné (cycles par échantillon). */
     static int mipFor (float increment)
@@ -70,6 +83,7 @@ private:
     juce::String name;
     int numFrames = 0;
     std::vector<float> data;
+    std::vector<float> pAmp, pPhase;
 };
 
 /** Banque des wavetables d'usine (construites une seule fois, partagées par toutes les instances). */

@@ -178,31 +178,64 @@ void Meter::paint (juce::Graphics& g)
 }
 
 // =============================================================================
-// WavetableView
+// OscDisplay
 // =============================================================================
-void WavetableView::tick()
+void OscDisplay::tick()
 {
-    const int t = (int) proc.getValue (P::oscATable);
-    const float pos = proc.getValue (P::oscAPos);
-    if (t != lastTable || std::abs (pos - lastPos) > 1.0e-4f)
+    const int t = (int) proc.getValue (oscId (osc, "table"));
+    const int mode = (int) proc.getValue (oscId (osc, "mode"));
+    const float pos = proc.getValue (oscId (osc, "pos"));
+    const int ver = proc.assetsVersion.load();
+    const bool msgVisible = message.isNotEmpty() && juce::Time::getMillisecondCounter() - messageTime < 4000;
+    if (t != lastTable || mode != lastMode || ver != lastVersion || std::abs (pos - lastPos) > 1.0e-4f || (message.isNotEmpty() && ! msgVisible))
     {
-        lastTable = t;
-        lastPos = pos;
+        if (ver != lastVersion) overview.clear();
+        if (! msgVisible) message.clear();
+        lastTable = t; lastMode = mode; lastVersion = ver; lastPos = pos;
         repaint();
     }
 }
 
-void WavetableView::paint (juce::Graphics& g)
+void OscDisplay::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat().reduced (4.0f);
-    g.setColour (Theme::bg.withAlpha (0.6f));
+    auto r = getLocalBounds().toFloat().reduced (2.0f);
+    g.setColour (Theme::bg.withAlpha (0.65f));
     g.fillRect (r);
-    const auto& wt = WavetableBank::get()[lastTable < 0 ? 0 : lastTable];
+    lastMode = (int) proc.getValue (oscId (osc, "mode"));
+    lastPos = proc.getValue (oscId (osc, "pos"));
+    if (lastMode == ModeWavetable) paintTable (g, r);
+    else paintSample (g, r);
+
+    g.setFont (Theme::mono (10.0f, true));
+    g.setColour (Theme::textDim);
+    g.drawText (proc.assetName (osc).toUpperCase(), r.reduced (6.0f, 3.0f), juce::Justification::topLeft);
+
+    if (message.isNotEmpty())
+    {
+        g.setColour (Theme::accent);
+        g.drawText (message, r.reduced (6.0f, 3.0f), juce::Justification::bottomLeft);
+    }
+    if (dropHover)
+    {
+        g.setColour (Theme::accent.withAlpha (0.18f));
+        g.fillRect (r);
+        g.setColour (Theme::accent);
+        g.drawRect (r, 2.0f);
+        g.setFont (Theme::mono (12.0f, true));
+        const juce::String what = lastMode == ModeWavetable ? IDG_T ("DÉPOSER : SAMPLE -> WAVETABLE")
+                                : lastMode == ModeSample ? IDG_T ("DÉPOSER : SAMPLE") : IDG_T ("DÉPOSER : MULTISAMPLE (fichiers ou dossier)");
+        g.drawText (what, r, juce::Justification::centred);
+    }
+}
+
+void OscDisplay::paintTable (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    const auto& wt = proc.displayTable (osc);
     const int frames = wt.getNumFrames();
     const float pos = juce::jmax (0.0f, lastPos);
     constexpr int pts = 128;
-    const float depthX = r.getWidth() * 0.18f, depthY = r.getHeight() * 0.32f;
-    auto plot = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + depthY, r.getWidth() - depthX - 8.0f, r.getHeight() - depthY - 6.0f);
+    const float depthX = r.getWidth() * 0.16f, depthY = r.getHeight() * 0.30f;
+    auto plot = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + depthY + 4.0f, r.getWidth() - depthX - 8.0f, r.getHeight() - depthY - 14.0f);
 
     auto pathFor = [&] (float framePos, float offset)
     {
@@ -218,14 +251,13 @@ void WavetableView::paint (juce::Graphics& g)
         return p;
     };
 
-    // frames empilées en perspective (du fond vers l'avant)
-    for (int f = frames - 1; f >= 0; --f)
+    const int step = juce::jmax (1, frames / 24);
+    for (int f = frames - 1; f >= 0; f -= step)
     {
         const float fp = frames > 1 ? (float) f / (float) (frames - 1) : 0.0f;
         g.setColour (Theme::blue.withAlpha (0.10f + 0.08f * (1.0f - std::abs (fp - pos))));
         g.strokePath (pathFor (fp, fp), juce::PathStrokeType (1.0f));
     }
-    // frame courante : néon orange avec aberration chromatique
     auto cur = pathFor (pos, pos);
     g.setColour (juce::Colour (0xffff1e3c).withAlpha (0.45f));
     g.strokePath (cur, juce::PathStrokeType (1.4f), juce::AffineTransform::translation (-1.5f, 0.0f));
@@ -236,10 +268,61 @@ void WavetableView::paint (juce::Graphics& g)
     g.setColour (Theme::accent.brighter (0.3f));
     g.strokePath (cur, juce::PathStrokeType (1.8f));
 
-    g.setFont (Theme::mono (10.0f, true));
+    g.setFont (Theme::mono (9.5f));
     g.setColour (Theme::textDim);
-    g.drawText (wt.getName().toUpperCase() + "  ·  " + juce::String (frames) + " FRAMES  ·  " + juce::String (juce::roundToInt (pos * 100.0f)) + " %",
-                r.reduced (6.0f, 3.0f), juce::Justification::topLeft);
+    g.drawText (juce::String (frames) + " FRAMES  " + juce::String (juce::roundToInt (pos * 100.0f)) + " %", r.reduced (6.0f, 3.0f), juce::Justification::topRight);
+}
+
+void OscDisplay::paintSample (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    const auto* set = proc.currentSamples (osc);
+    auto plot = r.reduced (6.0f, 18.0f);
+    if (set == nullptr || set->zones.empty())
+    {
+        g.setFont (Theme::mono (11.0f));
+        g.setColour (Theme::textDim.withAlpha (0.8f));
+        g.drawText (lastMode == ModeMulti ? IDG_T ("Glisse plusieurs fichiers ou un dossier ici (ou bouton CHARGER)")
+                                          : IDG_T ("Glisse un fichier audio ici (ou bouton CHARGER)"),
+                    plot, juce::Justification::centred);
+        return;
+    }
+    // aperçu : on affiche la zone de la note C3 (ou la première)
+    const int zi = juce::jmax (0, set->zoneFor (60));
+    const auto& z = *set->zones[(size_t) zi];
+    const int cols = juce::jmax (8, (int) plot.getWidth());
+    if ((int) overview.size() != cols)
+    {
+        overview.assign ((size_t) cols, 0.0f);
+        const int len = z.length();
+        for (int c = 0; c < cols; ++c)
+        {
+            const int a = (int) ((juce::int64) c * len / cols), b = (int) ((juce::int64) (c + 1) * len / cols);
+            float pk = 0.0f;
+            for (int i = a; i < juce::jmin (b, len); i += juce::jmax (1, (b - a) / 64))
+                pk = juce::jmax (pk, std::abs (z.data.getSample (0, i)), std::abs (z.data.getSample (1, i)));
+            overview[(size_t) c] = pk;
+        }
+    }
+    float mx = 1.0e-6f;
+    for (auto v : overview) mx = juce::jmax (mx, v);
+    g.setColour (Theme::accent.withAlpha (0.85f));
+    for (int c = 0; c < cols; ++c)
+    {
+        const float h = overview[(size_t) c] / mx * plot.getHeight() * 0.48f;
+        g.fillRect (plot.getX() + (float) c, plot.getCentreY() - h, 1.0f, juce::jmax (1.0f, 2.0f * h));
+    }
+    // point de départ
+    const float x = plot.getX() + juce::jlimit (0.0f, 1.0f, lastPos) * plot.getWidth();
+    g.setColour (Theme::blue);
+    g.fillRect (x - 1.0f, plot.getY(), 2.0f, plot.getHeight());
+    g.setColour (Theme::blue.withAlpha (0.12f));
+    g.fillRect (plot.getX(), plot.getY(), x - plot.getX(), plot.getHeight());
+
+    g.setFont (Theme::mono (9.5f));
+    g.setColour (Theme::textDim);
+    juce::String info = juce::String (z.length() / z.sampleRate, 2) + " s  " + juce::String (juce::roundToInt (z.sampleRate)) + " Hz";
+    if (set->zones.size() > 1) info = juce::String ((int) set->zones.size()) + " ZONES  " + info;
+    g.drawText (info, r.reduced (6.0f, 3.0f), juce::Justification::topRight);
 }
 
 // =============================================================================
@@ -341,5 +424,9 @@ void Scope::paint (juce::Graphics& g)
     g.strokePath (p, juce::PathStrokeType (1.0f), juce::AffineTransform::translation (1.2f, 0.0f));
     g.setColour (Theme::accent);
     g.strokePath (p, juce::PathStrokeType (1.2f));
+    g.setFont (Theme::mono (9.0f));
+    g.setColour (Theme::textDim);
+    g.drawText ("VOIX " + juce::String (proc.activeVoices.load()) + "  CPU " + juce::String (juce::roundToInt (proc.cpuLoad.load() * 100.0f)) + "%",
+                r.reduced (3.0f, 1.0f), juce::Justification::topLeft);
 }
 } // namespace idgs::ui

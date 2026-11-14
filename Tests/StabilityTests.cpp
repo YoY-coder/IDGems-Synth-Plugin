@@ -90,9 +90,10 @@ int snapshotMain (const juce::String& path, int tab)
 {
     IDGemsSynthProcessor proc;
     proc.prepareToPlay (48000.0, 512);
+    if (tab == 1) { proc.presets->load (2); }
+    if (tab == 2) { auto* p = proc.apvts.getParameter ("oscb_mode"); p->setValueNotifyingHost (p->convertTo0to1 (1.0f)); }
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
     ed->setSize (IDGemsSynthEditor::baseW, IDGemsSynthEditor::baseH);
-    juce::ignoreUnused (tab);
     auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
     juce::File f (path);
     f.deleteFile();
@@ -335,6 +336,342 @@ int main (int argc, char** argv)
         std::cout << "   charge : " << juce::String (ratio * 100.0, 2) << " % du temps reel (" << h.proc.activeVoices.load() << " voix)" << std::endl;
         check (h.proc.activeVoices.load() == 32, "les 32 voix ne sont pas toutes actives");
         check (ratio < 0.5, "CPU trop eleve : " + juce::String (ratio * 100.0, 1) + " %");
+    }
+
+    // ===================================================================== PHASE 2
+    // 11. Warps : chaque mode, avec Osc B comme source de modulation
+    {
+        std::cout << "11. Warps (chaque mode, source Osc B)..." << std::endl;
+        for (int w = 1; w < NumWarpModes; ++w)
+        {
+            Harness h;
+            h.set (P::oscATable, 1);
+            h.set (P::oscAPos, 0.5f);
+            h.set ("osca_warp1", (float) w);
+            h.set ("osca_warp1amt", 0.7f);
+            h.set ("osca_warp1src", (float) SrcOscB);
+            h.set ("oscb_on", 1.0f);
+            h.set ("oscb_semi", 7.0f);
+            for (int n : { 36, 60, 84 }) h.noteOn (n);
+            h.run (0.3);
+            const float pk = h.peak();
+            check (pk >= 0.0f, "warp " + warpNames()[w] + " : NaN");
+            check (pk <= ceilingGain (h), "warp " + warpNames()[w] + " : plafond depasse");
+            check (pk > 0.01f, "warp " + warpNames()[w] + " : silence");
+        }
+    }
+
+    // 12. Filtres : chaque type, résonance et drive au maximum
+    {
+        std::cout << "12. Filtres (chaque type, resonance et drive max)..." << std::endl;
+        for (int t = 0; t < NumFilterTypes; ++t)
+            for (float reso : { 0.0f, 1.0f })
+            {
+                Harness h;
+                h.set (P::oscATable, 1);
+                h.set (P::oscAPos, 1.0f);
+                h.set ("f1_on", 1.0f);
+                h.set ("f1_type", (float) t);
+                h.set ("f1_cutoff", 900.0f);
+                h.set ("f1_reso", reso);
+                h.set ("f1_drive", reso);
+                h.set ("f1_key", 0.5f);
+                for (int n : { 36, 48, 67, 91 }) h.noteOn (n);
+                h.run (0.25);
+                h.set ("f1_cutoff", 20000.0f);
+                h.run (0.1);
+                h.set ("f1_cutoff", 20.0f);
+                h.run (0.1);
+                const float pk = h.peak();
+                const auto name = filterTypeNames()[t] + " (reso " + juce::String (reso) + ")";
+                check (pk >= 0.0f, "filtre " + name + " : NaN");
+                check (pk <= ceilingGain (h), "filtre " + name + " : plafond depasse");
+                check (pk > 0.01f, "filtre " + name + " : silence");
+            }
+        // série / parallèle, routages
+        for (int serial = 0; serial < 2; ++serial)
+            for (int route = 0; route < 4; ++route)
+            {
+                Harness h;
+                h.set (P::filtSerial, (float) serial);
+                h.set ("f1_on", 1.0f);
+                h.set ("f2_on", 1.0f);
+                h.set ("osca_route", (float) route);
+                h.set (P::subOn, 1.0f);
+                h.set (P::subRoute, (float) ((route + 1) % 4));
+                h.noteOn (48);
+                h.run (0.2);
+                check (h.peak() > 0.01f, "routage " + juce::String (route) + (serial ? " parallele" : " serie") + " : silence");
+            }
+    }
+
+    // 13. Sub et bruits
+    {
+        std::cout << "13. Sub et banque de bruits..." << std::endl;
+        for (int t = 0; t < NumNoiseTypes; ++t)
+        {
+            Harness h;
+            h.set (P::oscAOn, 0.0f);
+            h.set (P::noiseOn, 1.0f);
+            h.set (P::noiseType, (float) t);
+            h.set (P::noiseLevel, 1.0f);
+            for (float tone : { -0.8f, 0.0f, 0.8f })
+            {
+                h.set (P::noiseTone, tone);
+                h.noteOn (60);
+                h.run (0.3);
+                h.noteOff (60);
+                h.run (0.05);
+            }
+            check (h.peak() >= 0.0f, "bruit " + noiseTypeNames()[t] + " : NaN");
+            check (h.peak() > 0.005f, "bruit " + noiseTypeNames()[t] + " : silence");
+        }
+        for (int shape = 0; shape < 3; ++shape)
+        {
+            Harness h;
+            h.set (P::oscAOn, 0.0f);
+            h.set (P::subOn, 1.0f);
+            h.set (P::subShape, (float) shape);
+            h.noteOn (48);
+            h.run (0.2);
+            check (h.peak() > 0.05f, "sub forme " + juce::String (shape) + " : silence");
+        }
+    }
+
+    // 14. Modes de jeu : mono, legato, glide, sans clic
+    {
+        std::cout << "14. Mono / legato / glide..." << std::endl;
+        for (int mode : { VoiceMono, VoiceLegato })
+        {
+            Harness h;
+            h.sineSetup();
+            h.set (P::voiceMode, (float) mode);
+            h.set (P::glide, 120.0f);
+            h.set (P::velSens, 0.0f);
+            h.set (P::env1Attack, 0.0f);
+            h.set (P::env1Sustain, 1.0f);
+            // jeu legato : chaque note chevauche la précédente
+            h.noteOn (45, 1.0f);
+            h.run (0.1);
+            for (int k = 0; k < 8; ++k)
+            {
+                h.noteOn (47 + k * 2, 1.0f, 100);
+                h.noteOff (45 + k * 2, 300);
+                h.run (0.1);
+            }
+            h.run (0.1);
+            check (h.proc.activeVoices.load() == 1, juce::String (mode == VoiceMono ? "mono" : "legato") + " : " + juce::String (h.proc.activeVoices.load()) + " voix actives au lieu d'1");
+            check (h.maxStep() < 0.04f, juce::String (mode == VoiceMono ? "mono" : "legato") + " : clic de " + juce::String (h.maxStep()));
+            // retour à la note tenue quand on relâche la dernière
+            h.noteOn (60, 1.0f);
+            h.run (0.05);
+            h.noteOff (60);
+            h.run (0.05);
+            check (h.proc.activeVoices.load() == 1, "la note tenue n'est pas reprise apres relachement");
+        }
+        {
+            // poly + glide : pas de NaN, pas de clic
+            Harness h;
+            h.sineSetup();
+            h.set (P::glide, 200.0f);
+            h.set (P::velSens, 0.0f);
+            for (int n : { 40, 47, 52, 59 }) { h.noteOn (n, 0.6f); h.run (0.05); }
+            check (h.maxStep() < 0.04f, "poly + glide : clic de " + juce::String (h.maxStep()));
+        }
+    }
+
+    // 15. Unison et inharmonicité : changements en cours de note sans clic, sans NaN
+    {
+        std::cout << "15. Unison et inharmonicite..." << std::endl;
+        Harness h;
+        h.sineSetup();
+        h.set (P::velSens, 0.0f);
+        h.noteOn (45, 1.0f);
+        h.run (0.1);
+        const size_t from = h.outL.size();
+        for (int u : { 3, 7, 16, 1, 5 }) { h.set ("osca_unison", (float) u); h.run (0.05); }
+        check (h.maxStep (from) < 0.05f, "changement d'unison : clic de " + juce::String (h.maxStep (from)));
+        for (float st : { 0.3f, -0.6f, 1.0f, 0.0f })
+        {
+            h.set ("osca_stretch", st);
+            h.set ("osca_shift", st * 0.5f);
+            h.run (0.05);
+        }
+        check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h), "inharmonicite : NaN ou plafond");
+        // les deux oscillateurs en unison 16 + additif : test de charge plus loin
+    }
+
+    // 16. Samples : chargement, note d'origine dans le nom, boucle, multisample, sample -> wavetable
+    {
+        std::cout << "16. Samples (Sample, Multisample, sample -> wavetable)..." << std::endl;
+        auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("idgs_tests");
+        dir.deleteRecursively();
+        dir.createDirectory();
+        auto writeTone = [&] (const juce::String& name, double hz, double secs)
+        {
+            auto f = dir.getChildFile (name);
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::OutputStream> os (f.createOutputStream().release());
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), 44100.0, 1, 16, {}, 0));
+            if (w != nullptr) os.release();
+            juce::AudioBuffer<float> b (1, (int) (secs * 44100.0));
+            for (int i = 0; i < b.getNumSamples(); ++i)
+                b.setSample (0, i, 0.6f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * hz * i / 44100.0)
+                                  + 0.2f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * hz * 3.0 * i / 44100.0));
+            if (w != nullptr) w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+            return f;
+        };
+        auto a2 = writeTone ("Test_A2.wav", 110.0, 0.5);
+        auto c4 = writeTone ("Test_C4.wav", 261.63, 0.5);
+        check (SampleSet::noteFromName ("Piano_C3") == 60 && SampleSet::noteFromName ("Pad A#2") == 58
+                   && SampleSet::noteFromName ("Bass Eb1") == 39 && SampleSet::noteFromName ("Vox_Take2") == -1,
+               "detection de la note dans le nom de fichier");
+        {
+            Harness h;
+            h.set ("osca_mode", (float) ModeSample);
+            const auto msg = h.proc.dropFiles (0, { a2 });
+            check (h.proc.currentSamples (0) != nullptr, "sample non charge : " + msg);
+            check ((int) h.proc.getValue ("osca_root") == 57, "note d'origine A2 non detectee : " + juce::String (h.proc.getValue ("osca_root")));
+            h.noteOn (57);
+            h.run (1.5); // plus long que le sample : la boucle doit continuer
+            const size_t tail = h.outL.size() - 4096;
+            check (h.peak (tail) > 0.02f, "boucle : plus de son apres la fin du sample");
+            h.noteOff (57);
+            h.set ("osca_loop", 0.0f);
+            h.run (0.5);
+            h.noteOn (57);
+            h.run (1.5);
+            check (h.peak (h.outL.size() - 4096) < 1.0e-4f, "sans boucle : le sample devrait s'arreter");
+            check (h.peak() <= ceilingGain (h), "sample : plafond depasse");
+            // état : le chemin du sample est sauvé et rechargé
+            juce::MemoryBlock mb;
+            h.proc.getStateInformation (mb);
+            Harness b;
+            b.proc.setStateInformation (mb.getData(), (int) mb.getSize());
+            check (b.proc.currentSamples (0) != nullptr, "sample non recharge depuis l'etat");
+        }
+        {
+            Harness h;
+            h.set ("oscb_mode", (float) ModeMulti);
+            h.set ("oscb_on", 1.0f);
+            h.set (P::oscAOn, 0.0f);
+            h.proc.dropFiles (1, { a2, c4 });
+            const auto* set = h.proc.currentSamples (1);
+            check (set != nullptr && set->zones.size() == 2, "multisample : 2 zones attendues");
+            if (set != nullptr && set->zones.size() == 2)
+                check (set->zones[0]->root == 57 && set->zones[1]->root == 72 && set->zoneFor (40) == 0 && set->zoneFor (100) == 1,
+                       "multisample : repartition des zones incorrecte");
+            for (int n : { 40, 57, 72, 90 }) h.noteOn (n);
+            h.run (0.3);
+            check (h.peak() > 0.02f, "multisample : silence");
+        }
+        {
+            Harness h;
+            h.proc.dropFiles (0, { c4 });
+            const auto& t = h.proc.displayTable (0);
+            check ((int) h.proc.getValue (P::oscATable) == WavetableBank::get().size(), "sample -> wavetable : table personnalisee non selectionnee");
+            check (t.getNumFrames() > 1, "sample -> wavetable : une seule frame");
+            h.noteOn (60);
+            h.run (0.2);
+            check (h.peak() > 0.02f, "sample -> wavetable : silence");
+            juce::MemoryBlock mb;
+            h.proc.getStateInformation (mb);
+            Harness b;
+            b.proc.setStateInformation (mb.getData(), (int) mb.getSize());
+            check (b.proc.displayTable (0).getNumFrames() == t.getNumFrames(), "wavetable personnalisee non restauree");
+        }
+        dir.deleteRecursively();
+    }
+
+    // 17. Bouton dé : 20 wavetables aléatoires, balayées sur toute la position
+    {
+        std::cout << "17. Wavetables aleatoires (de)..." << std::endl;
+        Harness h;
+        for (int k = 0; k < 20; ++k)
+        {
+            h.proc.randomTable (0);
+            h.set (P::oscAPos, 0.0f);
+            h.noteOn (48 + k);
+            h.run (0.05);
+            h.set (P::oscAPos, 1.0f);
+            h.run (0.05);
+            h.noteOff (48 + k);
+        }
+        check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h), "wavetables aleatoires : NaN ou plafond");
+    }
+
+    // 18. Presets d'usine : chacun joue, sans NaN ni dépassement ; sauvegarde / rechargement d'un preset
+    {
+        std::cout << "18. Presets d'usine et sauvegarde..." << std::endl;
+        Harness h;
+        auto& pm = *h.proc.presets;
+        int factory = 0;
+        for (int i = 0; i < (int) pm.getAll().size(); ++i)
+        {
+            if (pm.getAll()[(size_t) i].factoryIndex < 0) continue;
+            ++factory;
+            pm.load (i);
+            const size_t from = h.outL.size();
+            for (int n : { 36, 48, 55, 64 }) h.noteOn (n, 0.9f);
+            h.run (0.4);
+            for (int n : { 36, 48, 55, 64 }) h.noteOff (n);
+            h.run (0.1);
+            const float pk = h.peak (from);
+            check (pk >= 0.0f && pk <= ceilingGain (h), "preset " + pm.getAll()[(size_t) i].name + " : NaN ou plafond");
+            check (pk > 0.01f, "preset " + pm.getAll()[(size_t) i].name + " : silence");
+            h.proc.panic();
+            h.run (0.05);
+        }
+        check (factory >= 8, "moins de 8 presets d'usine");
+        pm.load (2);
+        const float detune = h.proc.getValue ("osca_detune");
+        check (pm.save ("Test Claude", "IDGems", "Utilisateur", "test"), "sauvegarde du preset impossible");
+        pm.load (0);
+        int idx = -1;
+        for (int i = 0; i < (int) pm.getAll().size(); ++i) if (pm.getAll()[(size_t) i].name == "Test Claude") idx = i;
+        check (idx >= 0 && pm.load (idx), "preset sauvegarde introuvable");
+        check (std::abs (h.proc.getValue ("osca_detune") - detune) < 1.0e-4f, "preset recharge : valeur differente");
+        if (idx >= 0) pm.getAll()[(size_t) idx].file.deleteFile();
+    }
+
+    // 19. CPU au pire cas : 32 voix, 2 oscs en unison 16, additif, 2 filtres, sub, bruit
+    {
+        std::cout << "19. CPU au pire cas (32 voix x 2 oscs x unison 16 + additif + 2 filtres)..." << std::endl;
+        Harness h (48000.0, 256);
+        h.set (P::voices, 32);
+        for (int o = 0; o < 2; ++o)
+        {
+            h.set (oscId (o, "on").toRawUTF8(), 1.0f);
+            h.set (oscId (o, "unison").toRawUTF8(), 16.0f);
+            h.set (oscId (o, "warp1").toRawUTF8(), (float) WarpFM);
+            h.set (oscId (o, "warp1amt").toRawUTF8(), 0.3f);
+        }
+        h.set ("osca_stretch", 0.3f);
+        h.set ("f1_on", 1.0f); h.set ("f1_type", (float) FiltLadder);
+        h.set ("f2_on", 1.0f); h.set ("f2_type", (float) FiltCombPlus);
+        h.set (P::subOn, 1.0f);
+        h.set (P::noiseOn, 1.0f);
+        for (int n = 30; n < 62; ++n) h.noteOn (n, 0.7f);
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        h.run (3.0);
+        const double ratio = (juce::Time::getMillisecondCounterHiRes() - t0) / 3000.0;
+        std::cout << "   charge : " << juce::String (ratio * 100.0, 1) << " % du temps reel (pire cas, " << h.proc.activeVoices.load() << " voix)" << std::endl;
+        check (h.peak() >= 0.0f, "pire cas : NaN");
+    }
+
+    // 20. CPU d'un patch courant : 16 voix, Osc A unison 7 + Osc B, filtre LP24
+    {
+        std::cout << "20. CPU d'un patch courant (16 voix, unison 7, filtre)..." << std::endl;
+        Harness h (48000.0, 256);
+        h.set ("osca_unison", 7.0f);
+        h.set ("oscb_on", 1.0f);
+        h.set ("f1_on", 1.0f);
+        for (int n = 40; n < 56; ++n) h.noteOn (n, 0.7f);
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        h.run (5.0);
+        const double ratio = (juce::Time::getMillisecondCounterHiRes() - t0) / 5000.0;
+        std::cout << "   charge : " << juce::String (ratio * 100.0, 1) << " % du temps reel" << std::endl;
+        check (ratio < 0.5, "CPU trop eleve pour un patch courant : " + juce::String (ratio * 100.0, 1) + " %");
     }
 
     std::cout << (failures == 0 ? "=== TOUS LES TESTS PASSENT ===" : "=== " + juce::String (failures).toStdString() + " ECHEC(S) ===") << std::endl;

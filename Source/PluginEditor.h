@@ -2,13 +2,14 @@
 #include "PluginProcessor.h"
 #include "UI/LookAndFeel.h"
 #include "UI/SynthPage.h"
+#include "UI/PresetBrowser.h"
 
 /** Interface d'IDGems Synth : barre du haut toujours visible, onglets façon Serum, clavier à l'écran.
     Redimensionnable : tout le contenu est dessiné à une taille de référence puis mis à l'échelle. */
 class IDGemsSynthEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
-    static constexpr int baseW = 1280, baseH = 780;
+    static constexpr int baseW = 1360, baseH = 900;
 
     explicit IDGemsSynthEditor (IDGemsSynthProcessor&);
     ~IDGemsSynthEditor() override;

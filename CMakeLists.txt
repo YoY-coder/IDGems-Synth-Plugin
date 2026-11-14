@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # macOS : binaire universel (Mac Intel + Apple Silicon), compatible macOS 10.15+
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Version minimale de macOS")
 
-project(IDGemsSynth VERSION 0.1.0 LANGUAGES C CXX)
+project(IDGemsSynth VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -45,7 +45,9 @@ juce_add_plugin(IDGemsSynth
 set(IDGS_DSP_SOURCES
     Source/Core/Params.cpp
     Source/Synth/Wavetable.cpp
+    Source/Synth/SampleData.cpp
     Source/Synth/SynthEngine.cpp
+    Source/State/PresetManager.cpp
     Source/PluginProcessor.cpp)
 
 set(IDGS_UI_SOURCES
@@ -53,7 +55,8 @@ set(IDGS_UI_SOURCES
     Source/UI/LookAndFeel.cpp
     Source/UI/Theme.cpp
     Source/UI/Widgets.cpp
-    Source/UI/SynthPage.cpp)
+    Source/UI/SynthPage.cpp
+    Source/UI/PresetBrowser.cpp)
 
 # Police des titres (Michroma, licence SIL OFL : voir Resources/Fonts/OFL.txt)
 juce_add_binary_data(IDGemsSynthData SOURCES Resources/Fonts/Michroma-Regular.ttf)

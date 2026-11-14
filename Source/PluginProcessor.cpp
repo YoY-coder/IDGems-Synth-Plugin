@@ -7,19 +7,38 @@ IDGemsSynthProcessor::IDGemsSynthProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Sortie", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "IDGemsSynth", createLayout())
 {
-    // les wavetables d'usine sont construites ici, jamais dans le thread audio
+    // tables construites ici, jamais dans le thread audio
     (void) WavetableBank::get();
+    (void) SineTable::get();
 
-    auto r = [this] (const char* id) { return apvts.getRawParameterValue (id); };
-    raw.oscAOn = r (P::oscAOn);       raw.oscATable = r (P::oscATable); raw.oscAPos = r (P::oscAPos);
-    raw.oscAOct = r (P::oscAOct);     raw.oscASemi = r (P::oscASemi);   raw.oscAFine = r (P::oscAFine);
-    raw.oscALevel = r (P::oscALevel); raw.oscAPan = r (P::oscAPan);     raw.oscAPhase = r (P::oscAPhase);
-    raw.oscAPhRand = r (P::oscAPhRand);
-    raw.delay = r (P::env1Delay);     raw.attack = r (P::env1Attack);   raw.hold = r (P::env1Hold);
-    raw.decay = r (P::env1Decay);     raw.sustain = r (P::env1Sustain); raw.release = r (P::env1Release);
-    raw.aCurve = r (P::env1ACurve);   raw.dCurve = r (P::env1DCurve);   raw.rCurve = r (P::env1RCurve);
-    raw.voices = r (P::voices);       raw.velSens = r (P::velSens);     raw.bendRange = r (P::bendRange);
-    raw.masterVol = r (P::masterVol); raw.ceiling = r (P::ceiling);
+    auto r = [this] (const juce::String& id) { auto* p = apvts.getRawParameterValue (id); jassert (p != nullptr); return p; };
+    for (int o = 0; o < NumOscs; ++o)
+    {
+        auto& x = oscRaw[o];
+        x.on = r (oscId (o, "on")); x.mode = r (oscId (o, "mode")); x.table = r (oscId (o, "table")); x.pos = r (oscId (o, "pos"));
+        x.oct = r (oscId (o, "oct")); x.semi = r (oscId (o, "semi")); x.fine = r (oscId (o, "fine")); x.level = r (oscId (o, "level"));
+        x.pan = r (oscId (o, "pan")); x.phase = r (oscId (o, "phase")); x.phrand = r (oscId (o, "phrand"));
+        x.unison = r (oscId (o, "unison")); x.detune = r (oscId (o, "detune")); x.blend = r (oscId (o, "blend"));
+        x.spread = r (oscId (o, "spread")); x.stretch = r (oscId (o, "stretch")); x.shift = r (oscId (o, "shift"));
+        x.warp[0] = r (oscId (o, "warp1")); x.warpAmt[0] = r (oscId (o, "warp1amt")); x.warpSrc[0] = r (oscId (o, "warp1src"));
+        x.warp[1] = r (oscId (o, "warp2")); x.warpAmt[1] = r (oscId (o, "warp2amt")); x.warpSrc[1] = r (oscId (o, "warp2src"));
+        x.loop = r (oscId (o, "loop")); x.root = r (oscId (o, "root")); x.route = r (oscId (o, "route"));
+    }
+    for (int f = 0; f < 2; ++f)
+    {
+        auto& x = filtRaw[f];
+        x.on = r (filtId (f, "on")); x.type = r (filtId (f, "type")); x.cutoff = r (filtId (f, "cutoff")); x.reso = r (filtId (f, "reso"));
+        x.drive = r (filtId (f, "drive")); x.key = r (filtId (f, "key")); x.mix = r (filtId (f, "mix"));
+    }
+    raw.subOn = r (P::subOn); raw.subShape = r (P::subShape); raw.subOct = r (P::subOct); raw.subLevel = r (P::subLevel);
+    raw.subPan = r (P::subPan); raw.subRoute = r (P::subRoute);
+    raw.noiseOn = r (P::noiseOn); raw.noiseType = r (P::noiseType); raw.noiseLevel = r (P::noiseLevel); raw.noisePan = r (P::noisePan);
+    raw.noiseTone = r (P::noiseTone); raw.noiseRoute = r (P::noiseRoute); raw.serial = r (P::filtSerial);
+    raw.delay = r (P::env1Delay); raw.attack = r (P::env1Attack); raw.hold = r (P::env1Hold); raw.decay = r (P::env1Decay);
+    raw.sustain = r (P::env1Sustain); raw.release = r (P::env1Release); raw.aCurve = r (P::env1ACurve); raw.dCurve = r (P::env1DCurve);
+    raw.rCurve = r (P::env1RCurve); raw.voices = r (P::voices); raw.voiceMode = r (P::voiceMode); raw.glide = r (P::glide);
+    raw.glideCurve = r (P::glideCurve); raw.glideLegato = r (P::glideLegato); raw.velSens = r (P::velSens);
+    raw.bendRange = r (P::bendRange); raw.masterVol = r (P::masterVol); raw.ceiling = r (P::ceiling);
 
     juce::PropertiesFile::Options opts;
     opts.applicationName = "IDGemsSynth";
@@ -27,7 +46,12 @@ IDGemsSynthProcessor::IDGemsSynthProcessor()
     opts.folderName = "IDGems Synth";
     opts.osxLibrarySubFolder = "Application Support";
     appProps.setStorageParameters (opts);
+
+    presets = std::make_unique<PresetManager> (*this);
+    startTimer (500);
 }
+
+IDGemsSynthProcessor::~IDGemsSynthProcessor() { stopTimer(); }
 
 bool IDGemsSynthProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
@@ -48,16 +72,79 @@ void IDGemsSynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     panicGain = 1.0f;
 }
 
+void IDGemsSynthProcessor::setValue (const juce::String& id, float realValue)
+{
+    if (auto* p = apvts.getParameter (id))
+        p->setValueNotifyingHost (p->convertTo0to1 (realValue));
+}
+
+// =============================================================================
+// Paramètres -> réglages des voix
+// =============================================================================
 void IDGemsSynthProcessor::readParams (VoiceParams& p) const
 {
-    p.oscOn = raw.oscAOn->load() > 0.5f;
-    p.table = (int) raw.oscATable->load();
-    p.pos = raw.oscAPos->load();
-    p.level = raw.oscALevel->load();
-    p.pan = raw.oscAPan->load();
-    p.phase = raw.oscAPhase->load();
-    p.phaseRand = raw.oscAPhRand->load();
-    p.pitchOffset = std::round (raw.oscAOct->load()) * 12.0f + std::round (raw.oscASemi->load()) + raw.oscAFine->load() * 0.01f;
+    const int factoryCount = WavetableBank::get().size();
+    for (int o = 0; o < NumOscs; ++o)
+    {
+        const auto& x = oscRaw[o];
+        auto& op = p.osc[o];
+        op.on = x.on->load() > 0.5f;
+        op.mode = (int) x.mode->load();
+        const int t = (int) x.table->load();
+        const Wavetable* custom = assets[o].table.load();
+        op.table = t >= factoryCount ? (custom != nullptr ? custom : &WavetableBank::get()[0]) : &WavetableBank::get()[t];
+        op.samples = assets[o].samples.load();
+        op.pos = x.pos->load();
+        op.level = x.level->load();
+        op.pan = x.pan->load();
+        op.phase = x.phase->load();
+        op.phaseRand = x.phrand->load();
+        op.pitch = std::round (x.oct->load()) * 12.0f + std::round (x.semi->load()) + x.fine->load() * 0.01f;
+        op.unison = (int) x.unison->load();
+        op.detune = x.detune->load();
+        op.blend = x.blend->load();
+        op.spread = x.spread->load();
+        op.stretch = x.stretch->load();
+        op.shift = x.shift->load();
+        for (int w = 0; w < 2; ++w)
+        {
+            op.warp[w] = (int) x.warp[w]->load();
+            op.warpAmt[w] = x.warpAmt[w]->load();
+            op.warpSrc[w] = (int) x.warpSrc[w]->load();
+        }
+        op.loop = x.loop->load() > 0.5f;
+        op.root = (int) x.root->load();
+        op.route = (int) x.route->load();
+    }
+    p.sub.on = raw.subOn->load() > 0.5f;
+    p.sub.shape = (int) raw.subShape->load();
+    p.sub.oct = (int) raw.subOct->load();
+    p.sub.level = raw.subLevel->load();
+    p.sub.pan = raw.subPan->load();
+    p.sub.route = (int) raw.subRoute->load();
+    p.noise.on = raw.noiseOn->load() > 0.5f;
+    p.noise.type = (int) raw.noiseType->load();
+    p.noise.level = raw.noiseLevel->load();
+    p.noise.pan = raw.noisePan->load();
+    p.noise.tone = raw.noiseTone->load();
+    p.noise.route = (int) raw.noiseRoute->load();
+    for (int f = 0; f < 2; ++f)
+    {
+        const auto& x = filtRaw[f];
+        auto& fp = p.filt[f];
+        fp.on = x.on->load() > 0.5f;
+        fp.type = (int) x.type->load();
+        fp.cutoff = x.cutoff->load();
+        fp.reso = x.reso->load();
+        fp.drive = x.drive->load();
+        fp.key = x.key->load();
+        fp.mix = x.mix->load();
+    }
+    p.serial = raw.serial->load() < 0.5f;
+    p.voiceMode = (int) raw.voiceMode->load();
+    p.glideMs = raw.glide->load();
+    p.glideCurve = raw.glideCurve->load();
+    p.glideLegato = raw.glideLegato->load() > 0.5f;
     p.velSens = raw.velSens->load();
     p.maxVoices = (int) raw.voices->load();
     p.env.delayMs = raw.delay->load();
@@ -71,6 +158,9 @@ void IDGemsSynthProcessor::readParams (VoiceParams& p) const
     p.env.releaseCurve = raw.rCurve->load();
 }
 
+// =============================================================================
+// Rendu
+// =============================================================================
 void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -85,14 +175,12 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     readParams (vp);
     const float bendRange = std::round (raw.bendRange->load());
 
-    // Panic : fondu de toutes les voix, puis buffers vidés pendant le silence
     if (panicFlag.exchange (false))
     {
         engine.allSoundOff();
         panicMute = (int) (0.01 * sr);
     }
 
-    // buffer de travail stéréo (au cas où l'hôte donne plus d'échantillons qu'annoncé, on traite par tranches)
     const int cap = work.getNumSamples();
     auto it = midi.cbegin();
     for (int done = 0; done < n;)
@@ -121,7 +209,6 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             pos = next;
         }
 
-        // volume général lissé
         masterGain.setTargetValue (raw.masterVol->load() <= -59.9f ? 0.0f : idg::dsp::dbToGain (raw.masterVol->load()));
         for (int i = 0; i < len; ++i)
         {
@@ -130,7 +217,7 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             R[i] *= g;
         }
 
-        // chaîne de sortie (reprise d'IDGems) : en phase 1, seul le limiteur agit
+        // chaîne de sortie (reprise d'IDGems) : en phase 2, seul le limiteur agit
         idg::OutputChain::Settings os;
         os.hpFreq = 5.0f;
         os.monoOn = false;
@@ -165,7 +252,6 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             }
         }
 
-        // copie vers l'hôte
         if (buffer.getNumChannels() >= 2)
         {
             buffer.copyFrom (0, done, L, len);
@@ -194,7 +280,6 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
         done += len;
     }
-    // événements MIDI restants (position au-delà du bloc) : traités quand même
     for (; it != midi.cend(); ++it) engine.handleMidi ((*it).getMessage(), vp);
 
     activeVoices.store (engine.getActiveVoices(), std::memory_order_relaxed);
@@ -203,20 +288,210 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     cpuLoad.store (cpuLoad.load (std::memory_order_relaxed) * 0.9f + load * 0.1f, std::memory_order_relaxed);
 }
 
-void IDGemsSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
+// =============================================================================
+// Tables et samples
+// =============================================================================
+void IDGemsSynthProcessor::retire (std::shared_ptr<void> p)
+{
+    if (p != nullptr) retired.emplace_back (juce::Time::getMillisecondCounterHiRes(), std::move (p));
+}
+
+void IDGemsSynthProcessor::timerCallback()
+{
+    // destruction différée des tables / samples remplacés (le thread audio ne les lit plus)
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    retired.erase (std::remove_if (retired.begin(), retired.end(), [now] (auto& e) { return now - e.first > 2000.0; }), retired.end());
+}
+
+void IDGemsSynthProcessor::setTable (int osc, std::unique_ptr<Wavetable> t)
+{
+    auto& a = assets[osc];
+    std::shared_ptr<Wavetable> sp (std::move (t));
+    a.table.store (sp.get());
+    retire (std::move (a.tableOwner));
+    a.tableOwner = std::move (sp);
+    if (a.tableOwner != nullptr) setValue (oscId (osc, "table"), (float) WavetableBank::get().size()); // « Personnalisée »
+    ++assetsVersion;
+}
+
+void IDGemsSynthProcessor::setSamples (int osc, std::unique_ptr<SampleSet> s, const juce::Array<juce::File>& files)
+{
+    auto& a = assets[osc];
+    std::shared_ptr<SampleSet> sp (std::move (s));
+    a.samples.store (sp.get());
+    retire (std::move (a.samplesOwner));
+    a.samplesOwner = std::move (sp);
+    a.files = files;
+    ++assetsVersion;
+}
+
+juce::String IDGemsSynthProcessor::dropFiles (int osc, const juce::Array<juce::File>& files)
+{
+    if (files.isEmpty()) return {};
+    const int mode = (int) getValue (oscId (osc, "mode"));
+    juce::String error;
+    if (mode == ModeWavetable)
+    {
+        // sample -> wavetable : découpage automatique en frames
+        juce::File f;
+        for (auto& x : files) if (SampleSet::isAudioFile (x)) { f = x; break; }
+        if (! f.existsAsFile()) return IDG_T ("Aucun fichier audio reconnu.");
+        auto mono = SampleSet::loadMono (f, error);
+        if (mono.empty()) return error;
+        auto t = Wavetable::fromSample (f.getFileNameWithoutExtension(), mono.data(), (int) mono.size());
+        juce::String msg = t->getName() + " : " + juce::String (t->getNumFrames()) + " frames";
+        setTable (osc, std::move (t));
+        return msg;
+    }
+    auto set = SampleSet::load (files, mode == ModeMulti, error);
+    if (set == nullptr) return error;
+    if (mode == ModeSample)
+    {
+        const int note = SampleSet::noteFromName (set->zones[0]->file.getFileNameWithoutExtension());
+        if (note >= 0) setValue (oscId (osc, "root"), (float) note);
+    }
+    juce::Array<juce::File> list;
+    for (auto& z : set->zones) list.add (z->file);
+    const auto msg = set->name;
+    setSamples (osc, std::move (set), list);
+    return msg;
+}
+
+void IDGemsSynthProcessor::randomTable (int osc)
+{
+    const auto seed = (uint32_t) juce::Random::getSystemRandom().nextInt();
+    setTable (osc, Wavetable::random (seed));
+}
+
+const Wavetable& IDGemsSynthProcessor::displayTable (int osc) const
+{
+    const int t = (int) getValue (oscId (osc, "table"));
+    const auto* custom = assets[osc].table.load();
+    if (t >= WavetableBank::get().size()) return custom != nullptr ? *custom : WavetableBank::get()[0];
+    return WavetableBank::get()[t];
+}
+
+juce::String IDGemsSynthProcessor::assetName (int osc) const
+{
+    const int mode = (int) getValue (oscId (osc, "mode"));
+    if (mode == ModeWavetable) return displayTable (osc).getName();
+    const auto* s = assets[osc].samples.load();
+    return s != nullptr ? s->name : IDG_T ("(glisse un fichier audio ici)");
+}
+
+// =============================================================================
+// État
+// =============================================================================
+juce::ValueTree IDGemsSynthProcessor::captureState()
 {
     auto state = apvts.copyState();
-    #ifdef JucePlugin_VersionString
+#ifdef JucePlugin_VersionString
     state.setProperty ("version", JucePlugin_VersionString, nullptr);
 #endif
-    if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
+    if (presets != nullptr) state.setProperty ("presetName", presets->currentName(), nullptr);
+    juce::ValueTree extra ("Assets");
+    for (int o = 0; o < NumOscs; ++o)
+    {
+        juce::ValueTree a ("Osc");
+        a.setProperty ("index", o, nullptr);
+        if (auto* t = assets[o].tableOwner.get())
+        {
+            // la table personnalisée est sauvée avec le projet (cycles bruts, frame complète)
+            juce::MemoryBlock mb;
+            for (int f = 0; f < t->getNumFrames(); ++f) mb.append (t->table (f, 0), sizeof (float) * Wavetable::Size);
+            a.setProperty ("tableName", t->getName(), nullptr);
+            a.setProperty ("tableData", mb.toBase64Encoding(), nullptr);
+        }
+        juce::StringArray paths;
+        for (auto& f : assets[o].files) paths.add (f.getFullPathName());
+        if (! paths.isEmpty()) a.setProperty ("samples", paths.joinIntoString ("|"), nullptr);
+        extra.appendChild (a, nullptr);
+    }
+    state.removeChild (state.getChildWithName ("Assets"), nullptr);
+    state.appendChild (extra, nullptr);
+    return state;
+}
+
+void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
+{
+    if (! tree.hasType (apvts.state.getType())) return;
+    auto copy = tree.createCopy();
+    auto extra = copy.getChildWithName ("Assets");
+    copy.removeChild (extra, nullptr);
+
+    // les paramètres absents (presets d'une version plus ancienne) reprennent leur valeur par défaut
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            if (! copy.getChildWithProperty ("id", rp->getParameterID()).isValid())
+                rp->setValueNotifyingHost (rp->getDefaultValue());
+    apvts.replaceState (copy);
+
+    for (int o = 0; o < NumOscs; ++o)
+    {
+        auto a = extra.getChildWithProperty ("index", o);
+        std::unique_ptr<Wavetable> table;
+        if (a.isValid() && a.hasProperty ("tableData"))
+        {
+            juce::MemoryBlock mb;
+            if (mb.fromBase64Encoding (a.getProperty ("tableData").toString()) && mb.getSize() >= sizeof (float) * Wavetable::Size)
+            {
+                std::vector<float> cycles (mb.getSize() / sizeof (float));
+                std::memcpy (cycles.data(), mb.getData(), cycles.size() * sizeof (float));
+                table = Wavetable::fromFrames (a.getProperty ("tableName").toString(), cycles);
+            }
+        }
+        const int t = (int) getValue (oscId (o, "table"));
+        // ne pas forcer « Personnalisée » si le preset utilise une table d'usine
+        auto& as = assets[o];
+        std::shared_ptr<Wavetable> sp (std::move (table));
+        as.table.store (sp.get());
+        retire (std::move (as.tableOwner));
+        as.tableOwner = std::move (sp);
+        juce::ignoreUnused (t);
+
+        juce::Array<juce::File> files;
+        if (a.isValid())
+            for (auto& path : juce::StringArray::fromTokens (a.getProperty ("samples").toString(), "|", ""))
+                if (path.isNotEmpty()) files.add (juce::File (path));
+        std::unique_ptr<SampleSet> set;
+        if (! files.isEmpty())
+        {
+            juce::String error;
+            set = SampleSet::load (files, (int) getValue (oscId (o, "mode")) == ModeMulti || files.size() > 1, error);
+        }
+        setSamples (o, std::move (set), files);
+    }
+    ++assetsVersion;
+}
+
+void IDGemsSynthProcessor::resetToInit()
+{
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            rp->setValueNotifyingHost (rp->getDefaultValue());
+    for (int o = 0; o < NumOscs; ++o)
+    {
+        setSamples (o, nullptr, {});
+        auto& as = assets[o];
+        as.table.store (nullptr);
+        retire (std::move (as.tableOwner));
+    }
+    ++assetsVersion;
+}
+
+void IDGemsSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    if (auto xml = captureState().createXml()) copyXmlToBinary (*xml, destData);
 }
 
 void IDGemsSynthProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
-        if (xml->hasTagName (apvts.state.getType()))
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    {
+        auto tree = juce::ValueTree::fromXml (*xml);
+        restoreState (tree);
+        if (presets != nullptr && tree.hasProperty ("presetName")) presets->setCurrentName (tree.getProperty ("presetName").toString());
+    }
 }
 
 juce::AudioProcessorEditor* IDGemsSynthProcessor::createEditor() { return new IDGemsSynthEditor (*this); }

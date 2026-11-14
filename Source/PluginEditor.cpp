@@ -41,8 +41,24 @@ struct IDGemsSynthEditor::Content : public juce::Component
           ceiling (p, idgs::P::ceiling, "Plafond", Theme::blue),
           meter (p),
           scope (p),
-          keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
+          keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard),
+          browser (p)
     {
+        // ---- barre de presets
+        prevBtn.setTooltip (IDG_T ("Preset précédent"));
+        nextBtn.setTooltip (IDG_T ("Preset suivant"));
+        presetName.setTooltip (IDG_T ("Ouvrir le navigateur de presets (catégories, recherche, favoris)"));
+        saveBtn.setTooltip (IDG_T ("Sauvegarder le son actuel comme preset"));
+        prevBtn.onClick = [&p] { p.presets->next (-1); };
+        nextBtn.onClick = [&p] { p.presets->next (1); };
+        presetName.onClick = [this] { browser.open(); };
+        saveBtn.onClick = [this] { browser.openSave(); };
+        presetName.setColour (juce::TextButton::buttonColourId, Theme::bg);
+        for (auto* b : { &prevBtn, &nextBtn, &presetName, &saveBtn }) addAndMakeVisible (b);
+        browser.flash = [this] (const juce::String& m) { flash (m); };
+        addChildComponent (browser);
+        refreshPresetName();
+
         const juce::StringArray names { "SYNTH", "FX", "MODULATION", IDG_T ("ARPÉ / SÉQ"), "EXPORT" };
         for (int i = 0; i < names.size(); ++i)
         {
@@ -104,32 +120,60 @@ struct IDGemsSynthEditor::Content : public juce::Component
         Theme::cutText (g, "IDGEMS", { 16.0f, 10.0f, 150.0f, 36.0f }, 24.0f, Theme::accent, juce::Justification::centredLeft, 0.6f, true);
         Theme::cutText (g, "SYNTH", { 136.0f, 10.0f, 130.0f, 36.0f }, 24.0f, Theme::blue, juce::Justification::centredLeft, 0.0f, true);
 
-        // infos moteur
-        g.setFont (Theme::mono (10.5f));
-        g.setColour (Theme::textDim);
-        g.drawText ("VOIX " + juce::String (proc.activeVoices.load()) + "   CPU " + juce::String (juce::roundToInt (proc.cpuLoad.load() * 100.0f)) + " %",
-                    infoArea, juce::Justification::centredRight);
+        // message bref (sauvegarde de preset, etc.)
+        if (flashText.isNotEmpty())
+        {
+            g.setFont (Theme::mono (10.0f, true));
+            g.setColour (Theme::accent);
+            g.drawText (flashText, flashArea, juce::Justification::centred);
+        }
     }
+
+    void flash (const juce::String& m)
+    {
+        flashText = m;
+        flashTime = juce::Time::getMillisecondCounter();
+        repaint (flashArea);
+    }
+
+    void tickFlash()
+    {
+        if (flashText.isNotEmpty() && juce::Time::getMillisecondCounter() - flashTime > 2500) { flashText.clear(); repaint (flashArea); }
+    }
+
+    void refreshPresetName() { presetName.setButtonText (proc.presets->currentName()); }
 
     void resized() override
     {
         auto r = getLocalBounds();
         auto top = r.removeFromTop (topH);
-        top.removeFromLeft (270);
-        for (auto* t : tabs) t->setBounds (top.removeFromLeft (t->getButtonText().length() > 6 ? 112 : 76).reduced (3, 14));
+        top.removeFromLeft (264);
+        const int tabW[] { 66, 50, 104, 96, 70 };
+        for (int i = 0; i < tabs.size(); ++i) tabs[i]->setBounds (top.removeFromLeft (tabW[i]).reduced (2, 14));
         top.removeFromRight (10);
         meter.setBounds (top.removeFromRight (34).reduced (0, 8));
         top.removeFromRight (6);
         ceiling.setBounds (top.removeFromRight (54).reduced (0, 2));
         masterVol.setBounds (top.removeFromRight (54).reduced (0, 2));
         top.removeFromRight (8);
-        panicBtn.setBounds (top.removeFromRight (70).reduced (0, 15));
+        panicBtn.setBounds (top.removeFromRight (66).reduced (0, 15));
         top.removeFromRight (8);
-        scope.setBounds (top.removeFromRight (130).reduced (0, 9));
-        infoArea = top.removeFromRight (140).reduced (4, 0);
+        scope.setBounds (top.removeFromRight (120).reduced (0, 7));
+        top.removeFromRight (8);
+        // presets : centrés dans l'espace restant
+        auto pr = top.withSizeKeepingCentre (juce::jmin (top.getWidth(), 330), 28);
+        prevBtn.setBounds (pr.removeFromLeft (26));
+        pr.removeFromLeft (3);
+        saveBtn.setBounds (pr.removeFromRight (64));
+        pr.removeFromRight (3);
+        nextBtn.setBounds (pr.removeFromRight (26));
+        pr.removeFromRight (3);
+        presetName.setBounds (pr);
+        flashArea = presetName.getBounds().translated (0, 20).withHeight (12).expanded (60, 0);
 
-        keyboard.setBounds (r.removeFromBottom (86).reduced (12, 6));
+        keyboard.setBounds (r.removeFromBottom (76).reduced (12, 5));
         for (auto* pg : pages) pg->setBounds (r);
+        browser.setBounds (getLocalBounds());
     }
 
     static constexpr int topH = 58;
@@ -143,7 +187,11 @@ struct IDGemsSynthEditor::Content : public juce::Component
     Meter meter;
     Scope scope;
     juce::MidiKeyboardComponent keyboard;
-    juce::Rectangle<int> infoArea;
+    juce::TextButton prevBtn { "<" }, nextBtn { ">" }, presetName { "Init" }, saveBtn { "SAUVER" };
+    PresetBrowser browser;
+    juce::String flashText;
+    juce::uint32 flashTime = 0;
+    juce::Rectangle<int> flashArea;
     juce::Image background;
 };
 
@@ -156,6 +204,8 @@ IDGemsSynthEditor::IDGemsSynthEditor (IDGemsSynthProcessor& p)
     content->setSize (baseW, baseH);
     for (int i = 0; i < content->tabs.size(); ++i) content->tabs[i]->onClick = [this, i] { selectTab (i); };
     selectTab (0);
+    juce::Component::SafePointer<IDGemsSynthEditor> safe (this);
+    proc.presets->onChange = [safe] { if (safe != nullptr) safe->content->refreshPresetName(); };
 
     tooltip = std::make_unique<juce::TooltipWindow> (this, 600);
 
@@ -176,6 +226,7 @@ IDGemsSynthEditor::IDGemsSynthEditor (IDGemsSynthProcessor& p)
 IDGemsSynthEditor::~IDGemsSynthEditor()
 {
     stopTimer();
+    proc.presets->onChange = nullptr;
     tooltip.reset();
     content.reset();
     setLookAndFeel (nullptr);
@@ -204,5 +255,5 @@ void IDGemsSynthEditor::timerCallback()
     content->meter.tick();
     content->scope.tick();
     content->synth.tick();
-    content->repaint (content->infoArea);
+    content->tickFlash();
 }
