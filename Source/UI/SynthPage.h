@@ -76,12 +76,12 @@ class NoisePanel : public Section
 public:
     explicit NoisePanel (IDGemsSynthProcessor& p);
     void resized() override;
-    void tick() { view.tick(); }
+    void tick() { types.tick(); }
 
 private:
-    NoiseView view;
+    NoiseTypeSelector types;
     ParamToggle on;
-    ParamCombo route, type;
+    ParamCombo route;
     Knob level, pan, tone;
 };
 
@@ -118,10 +118,8 @@ class VoicePanel : public Section
 public:
     explicit VoicePanel (IDGemsSynthProcessor& p);
     void resized() override;
-    void tick() { view.tick(); }
 
 private:
-    GlideView view;
     ParamCombo mode;
     ParamToggle legato;
     Knob voices, glide, glideCurve, velSens, bendRange;

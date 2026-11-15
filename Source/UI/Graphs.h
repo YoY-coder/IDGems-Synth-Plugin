@@ -119,26 +119,27 @@ public:
     void paint (juce::Graphics&) override;
 };
 
-class NoiseView : public LiveGraph
+/** Choix du type de bruit : une rangée de petits logos cliquables (un par bruit). */
+class NoiseTypeSelector : public juce::Component, public juce::TooltipClient
 {
 public:
-    explicit NoiseView (IDGemsSynthProcessor& p);
+    explicit NoiseTypeSelector (IDGemsSynthProcessor& p);
     void paint (juce::Graphics&) override;
-};
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent& e) override { const int c = cellAt (e.position.x); if (c != hover) { hover = c; repaint(); } }
+    void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
+    juce::String getTooltip() override { return hover >= 0 ? noiseTypeNames()[hover] : IDG_T ("Type de bruit"); }
+    void tick();
 
-/** Glide : courbe de hauteur d'une note à la suivante (temps et courbe), glisser vertical = courbe. */
-class GlideView : public LiveGraph
-{
-public:
-    explicit GlideView (IDGemsSynthProcessor& p);
-    void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override { curve.begin(); start = curve.get(); }
-    void mouseDrag (const juce::MouseEvent& e) override { curve.set (juce::jlimit (-1.0f, 1.0f, start - (float) e.getDistanceFromDragStartY() / 80.0f)); }
-    void mouseUp (const juce::MouseEvent&) override { curve.end(); }
-    void mouseDoubleClick (const juce::MouseEvent&) override { curve.reset(); }
+    /** Logo d'un type de bruit dans un rectangle. */
+    static void drawIcon (juce::Graphics&, int type, juce::Rectangle<float>, juce::Colour);
 
 private:
-    ParamDrag curve;
-    float start = 0.0f;
+    int cellAt (float x) const { return juce::jlimit (0, NumNoiseTypes - 1, (int) (x / ((float) getWidth() / (float) NumNoiseTypes))); }
+    IDGemsSynthProcessor& proc;
+    ParamDrag type;
+    int hover = -1, last = -1;
+    bool lastOn = false;
 };
+
 } // namespace idgs::ui

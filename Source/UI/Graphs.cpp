@@ -476,7 +476,7 @@ void UnisonView::paint (juce::Graphics& g)
 }
 
 // =============================================================================
-// SubView / NoiseView
+// SubView / NoiseTypeSelector
 // =============================================================================
 SubView::SubView (IDGemsSynthProcessor& p) : LiveGraph (p, { P::subOn, P::subShape, P::subOct, P::subLevel }) {}
 
@@ -509,77 +509,145 @@ void SubView::paint (juce::Graphics& g)
     glowPath (g, sub, on ? Theme::accent : Theme::textDim, on ? 1.0f : 0.3f);
 }
 
-NoiseView::NoiseView (IDGemsSynthProcessor& p) : LiveGraph (p, { P::noiseOn, P::noiseType, P::noiseTone, P::noiseLevel }) {}
-
-void NoiseView::paint (juce::Graphics& g)
+NoiseTypeSelector::NoiseTypeSelector (IDGemsSynthProcessor& p) : proc (p), type (drag (p, P::noiseType))
 {
-    auto r = getLocalBounds().toFloat().reduced (2.0f);
-    paintBackground (g, r);
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void NoiseTypeSelector::tick()
+{
+    const int t = (int) proc.getValue (P::noiseType);
     const bool on = proc.getValue (P::noiseOn) > 0.5f;
-    // extrait réel du générateur (même code que dans les voix), calculé à l'affichage
-    NoiseGen gen;
-    gen.prepare (44100.0);
-    gen.reset (7);
-    const int pts = juce::jmax (64, (int) r.getWidth());
-    const int stride = 24;
-    std::vector<float> v ((size_t) pts);
-    float mx = 1.0e-4f;
-    for (int i = 0; i < pts; ++i)
-    {
-        if (i % 4 == 0) gen.control ((int) proc.getValue (P::noiseType), proc.getValue (P::noiseTone), 220.0f, stride * 4);
-        float l = 0, rr = 0, pk = 0;
-        for (int k = 0; k < stride; ++k) { gen.tick (l, rr); if (std::abs (l) > std::abs (pk)) pk = l; }
-        v[(size_t) i] = pk;
-        mx = juce::jmax (mx, std::abs (pk));
-    }
-    const float lvl = 0.2f + 0.8f * proc.getValue (P::noiseLevel);
-    juce::Path p;
-    for (int i = 0; i < pts; ++i)
-    {
-        const float x = r.getX() + (float) i / (float) (pts - 1) * r.getWidth();
-        const float y = r.getCentreY() - v[(size_t) i] / mx * r.getHeight() * 0.42f * lvl;
-        if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
-    }
-    glowPath (g, p, on ? Theme::accent : Theme::textDim, on ? 0.8f : 0.3f);
-    // tonalité : pente indiquée en bleu
-    const float tone = proc.getValue (P::noiseTone);
-    g.setColour (Theme::blue.withAlpha (0.7f));
-    g.drawLine (r.getX() + 4.0f, r.getBottom() - 6.0f - juce::jmax (0.0f, -tone) * 20.0f, r.getRight() - 4.0f, r.getBottom() - 6.0f - juce::jmax (0.0f, tone) * 20.0f, 1.5f);
+    if (t != last || on != lastOn) { last = t; lastOn = on; repaint(); }
 }
 
-// =============================================================================
-// GlideView
-// =============================================================================
-GlideView::GlideView (IDGemsSynthProcessor& p)
-    : LiveGraph (p, { P::glide, P::glideCurve, P::voiceMode, P::glideLegato }), curve (drag (p, P::glideCurve))
+void NoiseTypeSelector::mouseDown (const juce::MouseEvent& e)
 {
-    setTooltip (IDG_T ("Glide : trajet de hauteur d'une note à la suivante. Glisser verticalement = courbe. Double-clic = défaut."));
-    setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+    type.begin();
+    type.set ((float) cellAt (e.position.x));
+    type.end();
+    tick();
 }
 
-void GlideView::paint (juce::Graphics& g)
+void NoiseTypeSelector::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat().reduced (2.0f);
-    paintBackground (g, r);
-    auto pl = r.reduced (10.0f, 14.0f);
-    const float ms = proc.getValue (P::glide), c = curve.get();
-    const int mode = (int) proc.getValue (P::voiceMode);
-    const float glideW = ms <= 0.5f ? 0.0f : juce::jlimit (0.08f, 0.8f, std::sqrt (ms) / std::sqrt (5000.0f) * 0.8f + 0.08f);
-    juce::Path p;
-    const float x0 = pl.getX() + pl.getWidth() * 0.12f, x1 = x0 + pl.getWidth() * glideW;
-    p.startNewSubPath (pl.getX(), pl.getBottom());
-    p.lineTo (x0, pl.getBottom());
-    for (int i = 1; i <= 40; ++i)
+    const float w = (float) getWidth() / (float) NumNoiseTypes;
+    const int current = (int) proc.getValue (P::noiseType);
+    const bool on = proc.getValue (P::noiseOn) > 0.5f;
+    for (int i = 0; i < NumNoiseTypes; ++i)
     {
-        const float t = (float) i / 40.0f;
-        p.lineTo (x0 + (x1 - x0) * t, pl.getBottom() - Envelope::shape (t, c) * pl.getHeight());
+        auto cell = juce::Rectangle<float> ((float) i * w, 0.0f, w, (float) getHeight()).reduced (2.0f);
+        const bool sel = i == current;
+        g.setColour (sel ? Theme::accent.withAlpha (on ? 0.22f : 0.1f) : (i == hover ? Theme::panelHi : Theme::bg.withAlpha (0.5f)));
+        g.fillRect (cell);
+        g.setColour (sel ? (on ? Theme::accent : Theme::textDim) : Theme::line);
+        g.drawRect (cell, sel ? 1.5f : 1.0f);
+        auto icon = cell.reduced (cell.getWidth() * 0.18f, cell.getHeight() * 0.12f).withTrimmedBottom (cell.getHeight() * 0.24f);
+        drawIcon (g, i, icon, sel ? (on ? Theme::accent.brighter (0.3f) : Theme::text) : Theme::textDim);
+        g.setFont (Theme::mono (8.0f, sel));
+        g.setColour (sel ? Theme::text : Theme::textDim);
+        g.drawText (noiseTypeNames()[i].toUpperCase().substring (0, 5), cell.withTrimmedTop (cell.getHeight() * 0.72f), juce::Justification::centred);
     }
-    p.lineTo (pl.getRight(), pl.getY());
-    glowPath (g, p, Theme::blue, ms > 0.5f ? 1.0f : 0.4f);
-    g.setFont (Theme::mono (9.5f, true));
-    g.setColour (Theme::textDim);
-    const juce::String modeTxt = mode == VoicePoly ? "POLY" : mode == VoiceMono ? "MONO" : "LEGATO";
-    g.drawText (modeTxt + "  //  GLIDE " + (ms <= 0.5f ? juce::String ("OFF") : (proc.apvts.getParameter (P::glide)->getCurrentValueAsText())),
-                r.reduced (6.0f, 3.0f), juce::Justification::topLeft);
+}
+
+void NoiseTypeSelector::drawIcon (juce::Graphics& g, int type, juce::Rectangle<float> r, juce::Colour c)
+{
+    g.setColour (c);
+    const juce::PathStrokeType stroke (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    juce::Random rnd (type * 31 + 5);
+    juce::Path p;
+    switch (type)
+    {
+        case NoiseWhite: // zigzag dense et régulier
+        {
+            for (int i = 0; i <= 14; ++i)
+            {
+                const float x = r.getX() + r.getWidth() * (float) i / 14.0f;
+                const float y = r.getCentreY() + (rnd.nextFloat() * 2.0f - 1.0f) * r.getHeight() * 0.45f;
+                if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+            }
+            g.strokePath (p, stroke);
+            break;
+        }
+        case NoisePink: // barres décroissantes (plus d'énergie dans le grave)
+        {
+            const float bw = r.getWidth() / 6.0f;
+            for (int i = 0; i < 6; ++i)
+            {
+                const float h = r.getHeight() * (1.0f - (float) i * 0.14f);
+                g.fillRect (r.getX() + (float) i * bw + 1.0f, r.getBottom() - h, bw - 2.0f, h);
+            }
+            break;
+        }
+        case NoiseVinyl: // disque : sillons + étiquette
+        {
+            const float d = juce::jmin (r.getWidth(), r.getHeight());
+            const auto sq = r.withSizeKeepingCentre (d, d);
+            g.drawEllipse (sq, 1.4f);
+            g.drawEllipse (sq.reduced (d * 0.16f), 0.8f);
+            g.fillEllipse (sq.reduced (d * 0.36f));
+            break;
+        }
+        case NoiseDigital: // escalier (échantillonneur-bloqueur)
+        {
+            float y = r.getCentreY();
+            p.startNewSubPath (r.getX(), y);
+            for (int i = 1; i <= 6; ++i)
+            {
+                const float x = r.getX() + r.getWidth() * (float) i / 6.0f;
+                p.lineTo (x, y);
+                y = r.getY() + rnd.nextFloat() * r.getHeight();
+                p.lineTo (x, y);
+            }
+            g.strokePath (p, juce::PathStrokeType (1.4f, juce::PathStrokeType::mitered));
+            break;
+        }
+        case NoiseWind: // trois souffles ondulés
+        {
+            for (int k = 0; k < 3; ++k)
+            {
+                juce::Path w;
+                const float y0 = r.getY() + r.getHeight() * (0.2f + 0.3f * (float) k);
+                const float len = r.getWidth() * (0.95f - 0.2f * (float) (k % 2));
+                w.startNewSubPath (r.getX(), y0);
+                w.cubicTo (r.getX() + len * 0.3f, y0 - r.getHeight() * 0.18f, r.getX() + len * 0.6f, y0 + r.getHeight() * 0.18f, r.getX() + len, y0);
+                g.strokePath (w, stroke);
+            }
+            break;
+        }
+        case NoiseRain: // gouttes
+        {
+            const float pos[][2] { { 0.2f, 0.25f }, { 0.55f, 0.12f }, { 0.82f, 0.45f }, { 0.35f, 0.62f }, { 0.68f, 0.82f } };
+            for (auto& d : pos)
+            {
+                const float x = r.getX() + d[0] * r.getWidth(), y = r.getY() + d[1] * r.getHeight();
+                const float s = r.getHeight() * 0.24f;
+                juce::Path drop;
+                drop.startNewSubPath (x, y - s * 0.6f);
+                drop.quadraticTo (x + s * 0.5f, y + s * 0.15f, x, y + s * 0.4f);
+                drop.quadraticTo (x - s * 0.5f, y + s * 0.15f, x, y - s * 0.6f);
+                g.fillPath (drop);
+            }
+            break;
+        }
+        case NoiseRadio: // antenne et ondes
+        {
+            const float cx = r.getCentreX(), base = r.getBottom(), top = r.getY() + r.getHeight() * 0.38f;
+            g.drawLine (cx, base, cx, top, 1.4f);
+            g.drawLine (cx - r.getWidth() * 0.18f, base, cx, top + r.getHeight() * 0.25f, 1.2f);
+            g.drawLine (cx + r.getWidth() * 0.18f, base, cx, top + r.getHeight() * 0.25f, 1.2f);
+            for (int k = 1; k <= 2; ++k)
+            {
+                const float rad = r.getHeight() * 0.17f * (float) k;
+                juce::Path arcL, arcR;
+                arcL.addCentredArc (cx, top, rad, rad, 0.0f, -2.4f, -0.75f, true);
+                arcR.addCentredArc (cx, top, rad, rad, 0.0f, 0.75f, 2.4f, true);
+                g.strokePath (arcL, stroke);
+                g.strokePath (arcR, stroke);
+            }
+            break;
+        }
+        default: break;
+    }
 }
 } // namespace idgs::ui

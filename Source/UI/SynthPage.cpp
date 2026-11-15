@@ -186,12 +186,12 @@ void SubPanel::resized()
 
 NoisePanel::NoisePanel (IDGemsSynthProcessor& p)
     : Section ("Noise", Theme::accent),
-      view (p),
-      on (p, P::noiseOn, "ON"), route (p, P::noiseRoute), type (p, P::noiseType),
+      types (p),
+      on (p, P::noiseOn, "ON"), route (p, P::noiseRoute),
       level (p, P::noiseLevel, "Level"), pan (p, P::noisePan, "Pan"), tone (p, P::noiseTone, "Tone")
 {
     titleWidth = 58;
-    addAll (*this, { &view, &on, &route, &type, &level, &pan, &tone });
+    addAll (*this, { &types, &on, &route, &level, &pan, &tone });
 }
 
 void NoisePanel::resized()
@@ -200,10 +200,9 @@ void NoisePanel::resized()
     on.setBounds (h.removeFromLeft (36));
     route.setBounds (h.removeFromRight (84));
     auto b = body();
-    type.setBounds (b.removeFromTop (26).reduced (2, 1));
+    types.setBounds (b.removeFromTop (juce::jmin (64, b.getHeight() / 2)).reduced (0, 2));
     b.removeFromTop (4);
-    row (b.removeFromBottom (62), { &level, &pan, &tone }, 4, 1);
-    view.setBounds (b.reduced (0, 2));
+    row (b, { &level, &pan, &tone }, 4, 4);
 }
 
 // =============================================================================
@@ -254,7 +253,7 @@ EnvPanel::EnvPanel (IDGemsSynthProcessor& p)
 void EnvPanel::resized()
 {
     auto b = body();
-    auto right = b.removeFromRight (b.getWidth() * 44 / 100);
+    auto right = b.removeFromRight (b.getWidth() * 38 / 100);
     view.setBounds (b);
     right.removeFromLeft (6);
     auto r1 = right.removeFromTop (right.getHeight() / 2);
@@ -264,28 +263,25 @@ void EnvPanel::resized()
 
 VoicePanel::VoicePanel (IDGemsSynthProcessor& p)
     : Section ("Voix  //  jeu", Theme::blue),
-      view (p),
-      mode (p, P::voiceMode), legato (p, P::glideLegato, "GLIDE LEGATO", Theme::blue),
+      mode (p, P::voiceMode), legato (p, P::glideLegato, "LEGATO", Theme::blue),
       voices (p, P::voices, "Voix", Theme::blue), glide (p, P::glide, "Glide", Theme::blue),
       glideCurve (p, P::glideCurve, "Courbe", Theme::blue), velSens (p, P::velSens, IDG_T ("VÉLOCITÉ"), Theme::blue),
       bendRange (p, P::bendRange, "Bend", Theme::blue)
 {
     titleWidth = 120;
-    addAll (*this, { &view, &mode, &legato, &voices, &glide, &glideCurve, &velSens, &bendRange });
+    addAll (*this, { &mode, &legato, &voices, &glide, &glideCurve, &velSens, &bendRange });
 }
 
 void VoicePanel::resized()
 {
     auto h = header();
-    mode.setBounds (h.removeFromLeft (110));
-    h.removeFromLeft (8);
-    legato.setBounds (h.removeFromLeft (120));
+    mode.setBounds (h.removeFromLeft (juce::jmin (110, h.getWidth())));
     auto b = body();
-    view.setBounds (b.removeFromLeft (b.getWidth() * 36 / 100).reduced (0, 2));
-    b.removeFromLeft (6);
     auto r1 = b.removeFromTop (b.getHeight() / 2);
-    row (r1, { &glide, &glideCurve, &voices });
-    row (b.withTrimmedRight (b.getWidth() / 3), { &velSens, &bendRange });
+    row (r1, { &voices, &velSens, &bendRange });
+    auto r2 = b;
+    legato.setBounds (r2.removeFromRight (r2.getWidth() / 3).withSizeKeepingCentre (juce::jmin (96, r2.getWidth() / 3), 24));
+    row (r2, { &glide, &glideCurve });
 }
 
 // =============================================================================
@@ -306,7 +302,7 @@ void SynthPage::tick()
     f1.tick();
     f2.tick();
     env.tick();
-    voice.tick();
+
 }
 
 void SynthPage::resized()
@@ -334,8 +330,8 @@ void SynthPage::resized()
     mid.removeFromLeft (gap);
     f2.setBounds (mid);
 
-    env.setBounds (bottom.removeFromLeft (half));
-    bottom.removeFromLeft (gap);
-    voice.setBounds (bottom);
+    voice.setBounds (bottom.removeFromRight (juce::jmax (300, bottom.getWidth() * 25 / 100)));
+    bottom.removeFromRight (gap);
+    env.setBounds (bottom);
 }
 } // namespace idgs::ui
