@@ -16,10 +16,14 @@ de random, même DA, avec un moteur de synthèse en dessous. JUCE 8 / C++17 / CM
 | 3 | Modulation : enveloppes (déblocage), LFO au crayon, random/S&H, macros, glisser-déposer | |
 | 4 | Bus A/B/C + Master, rack IDGems, séquenceur de modules, chaîne de sortie | |
 | 5 | Osc Texture : granulaire, spectral, chaos, résonateur, data bending, empreinte spectrale | |
-| 6 | Jeu : arpé, séquenceur, gammes, mutation, export MIDI, Note Spray, micro-random | |
+| 6 | Jeu : arpé, séquenceur, **générateur de patterns MIDI**, gammes, mutation, export MIDI, Note Spray, micro-random | |
 | 7 | Random : niveaux, cadenas, seed, historique, morph pad, personnalités, garde-fous | |
 | 8 | Création : enregistreur, rolling recorder, Feed, export WAV, batch render, Draft/HQ | |
 | 9 | Finitions : DA complète, undo/redo, A/B, MIDI learn, optimisation | |
+
+## Notes pour les phases à venir
+
+Voir [docs/NOTES.md](docs/NOTES.md) : demandes ajoutées en cours de route, à intégrer le moment venu.
 
 ## Structure du code
 
