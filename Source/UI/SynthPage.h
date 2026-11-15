@@ -17,17 +17,27 @@ public:
     juce::Rectangle<int> body() const { return getLocalBounds().reduced (10, 6).withTrimmedTop (28); }
 
 protected:
+    /** Petit titre de bloc à l'intérieur d'un panneau. */
+    static void blockTitle (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& t)
+    {
+        g.setFont (Theme::mono (9.0f, true));
+        g.setColour (Theme::textDim);
+        g.drawText (t, r.withHeight (12), juce::Justification::centred);
+        g.setColour (Theme::line.withAlpha (0.6f));
+        g.drawVerticalLine (r.getX() - 3, (float) r.getY(), (float) r.getBottom());
+    }
     juce::String title;
     juce::Colour colour;
     int titleWidth = 80;
 };
 
-/** Oscillateur A ou B : mode, table, dé, chargement, warps, unison, inharmonicité, sample. */
-class OscPanel : public Section, public juce::FileDragAndDropTarget
+/** Ligne d'oscillateur façon Vital : hauteur / niveau | table | unison | warp 1 | warp 2 | phase & inharmonicité. */
+class OscRow : public Section, public juce::FileDragAndDropTarget
 {
 public:
-    OscPanel (IDGemsSynthProcessor& p, int osc);
+    OscRow (IDGemsSynthProcessor& p, int osc);
     void resized() override;
+    void paintOverChildren (juce::Graphics&) override;
     void tick();
 
     bool isInterestedInFileDrag (const juce::StringArray&) override { return true; }
@@ -38,51 +48,63 @@ public:
 private:
     void loadFiles (const juce::Array<juce::File>& files);
     void updateVisibility();
-    void paintOverChildren (juce::Graphics&) override;
 
     IDGemsSynthProcessor& proc;
     int osc;
     ParamToggle on;
-    ParamCombo mode, table, route;
-    juce::TextButton dice { juce::String (juce::CharPointer_UTF8 ("D\xc3\x89")) }, load { "CHARGER" };
+    ParamCombo mode, table;
+    juce::TextButton dice, load { "CHARGER" };
     OscDisplay display;
-    UnisonView unisonView;
-    Knob pos, level, pan, oct, semi, fine, phase, phRand;
-    Knob unison, detune, blend, spread, stretch, shift, root;
-    ParamToggle loop;
+    Knob oct, semi, fine, level, pan;
+    Knob unison, detune, blend, spread;
     ParamCombo warp1, warp1Src, warp2, warp2Src;
     Knob warp1Amt, warp2Amt;
+    Knob phase, phRand, stretch, shift, root;
+    ParamToggle loop;
     std::unique_ptr<juce::FileChooser> chooser;
     int lastMode = -1;
-    juce::Rectangle<int> warpLabel1, warpLabel2, unisonLabel;
+    juce::Rectangle<int> blocks[4];
 };
 
-class SubPanel : public Section
+/** Rangée Sub + Noise (compacte). */
+class SubNoiseRow : public Section
 {
 public:
-    explicit SubPanel (IDGemsSynthProcessor& p);
+    explicit SubNoiseRow (IDGemsSynthProcessor& p);
     void resized() override;
-    void tick() { view.tick(); }
+    void paintOverChildren (juce::Graphics&) override;
+    void tick() { subView.tick(); noiseTypes.tick(); }
 
 private:
-    SubView view;
-    ParamToggle on;
-    ParamCombo route, shape, oct;
-    Knob level, pan;
+    ParamToggle subOn, noiseOn;
+    ParamCombo subShape, subOct;
+    SubView subView;
+    Knob subLevel, subPan;
+    NoiseTypeSelector noiseTypes;
+    Knob noiseLevel, noisePan, noiseTone;
+    int split = 0;
 };
 
-class NoisePanel : public Section
+/** Boutons de routage d'un filtre (façon Vital) : quelles sources entrent dans ce filtre, + chaînage F1 -> F2. */
+class RouteButtons : public juce::Component, public juce::TooltipClient
 {
 public:
-    explicit NoisePanel (IDGemsSynthProcessor& p);
-    void resized() override;
-    void tick() { types.tick(); }
+    RouteButtons (IDGemsSynthProcessor& p, int filterIndex) : proc (p), filter (filterIndex) {}
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent& e) override { hover = cellAt (e.position.x); repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
+    juce::String getTooltip() override;
+    void tick();
 
 private:
-    NoiseTypeSelector types;
-    ParamToggle on;
-    ParamCombo route;
-    Knob level, pan, tone;
+    static constexpr int NumCells = 5; // Osc A, Osc B, Sub, Noise, chaînage
+    int cellAt (float x) const { return juce::jlimit (0, NumCells - 1, (int) (x / ((float) getWidth() / NumCells))); }
+    bool sourceIn (int src) const;
+    void toggleSource (int src);
+    IDGemsSynthProcessor& proc;
+    int filter, hover = -1;
+    float lastHash = -1.0f;
 };
 
 class FilterPanel : public Section
@@ -90,27 +112,53 @@ class FilterPanel : public Section
 public:
     FilterPanel (IDGemsSynthProcessor& p, int index);
     void resized() override;
-    void tick() { view.tick(); }
+    void tick() { view.tick(); routes.tick(); }
 
 private:
     int index;
     FilterView view;
+    RouteButtons routes;
     ParamToggle on;
     ParamCombo type;
-    std::unique_ptr<ParamCombo> serial; // uniquement sur le filtre 1
-    Knob cutoff, reso, drive, key, mix;
+    Knob cutoff, reso, drive, mix, key;
 };
 
-class EnvPanel : public Section
+/** Enveloppes avec un onglet chacune (ENV 1 = volume ; ENV 5 à 8 se débloquent en phase 3). */
+class EnvSection : public juce::Component
 {
 public:
-    explicit EnvPanel (IDGemsSynthProcessor& p);
+    explicit EnvSection (IDGemsSynthProcessor& p);
+    void paint (juce::Graphics&) override;
     void resized() override;
-    void tick() { view.tick(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void tick();
 
 private:
-    EnvelopeEditor view;
-    Knob delay, attack, hold, decay, sustain, release, aCurve, dCurve, rCurve;
+    struct Tab : public juce::Component
+    {
+        Tab (IDGemsSynthProcessor& p, int e);
+        void resized() override;
+        void paintOverChildren (juce::Graphics&) override;
+        int env;
+        EnvelopeEditor editor;
+        Knob delay, attack, hold, decay, sustain, release;
+    };
+    juce::Rectangle<int> tabArea() const { return getLocalBounds().reduced (1).removeFromLeft (72); }
+    juce::Rectangle<int> tabRect (int i) const;
+    juce::OwnedArray<Tab> tabs;
+    int selected = 0;
+};
+
+/** Zones réservées aux modules de la phase 3 (dessinées dans la DA, sans commandes). */
+class FuturePanel : public Section
+{
+public:
+    FuturePanel (const juce::String& title, juce::StringArray tabNames, juce::StringArray cells, juce::String note);
+    void paint (juce::Graphics&) override;
+
+private:
+    juce::StringArray tabNames, cells;
+    juce::String note;
 };
 
 class VoicePanel : public Section
@@ -122,10 +170,10 @@ public:
 private:
     ParamCombo mode;
     ParamToggle legato;
-    Knob voices, glide, glideCurve, velSens, bendRange;
+    Knob voices, bendRange, velSens, glide, glideCurve;
 };
 
-/** Onglet SYNTH. */
+/** Onglet SYNTH (disposition inspirée de Vital). */
 class SynthPage : public juce::Component
 {
 public:
@@ -134,11 +182,23 @@ public:
     void tick();
 
 private:
-    OscPanel oscA, oscB;
-    SubPanel sub;
-    NoisePanel noise;
+    OscRow oscA, oscB;
+    SubNoiseRow subNoise;
     FilterPanel f1, f2;
-    EnvPanel env;
+    EnvSection envs;
+    FuturePanel lfo, sources;
     VoicePanel voice;
+};
+
+/** Colonne des 8 macros (toujours visible, à gauche). */
+class MacroColumn : public juce::Component
+{
+public:
+    explicit MacroColumn (IDGemsSynthProcessor& p);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    juce::OwnedArray<Knob> knobs;
 };
 } // namespace idgs::ui

@@ -39,6 +39,14 @@ const juce::StringArray& tableChoiceNames(); // tables d'usine + « Personnalis�
 inline juce::String oscId (int osc, const char* key) { return juce::String (osc == 0 ? "osca_" : "oscb_") + key; }
 /** Identifiant d'un paramètre de filtre : filtId (1, "cutoff") -> "f2_cutoff". */
 inline juce::String filtId (int f, const char* key) { return "f" + juce::String (f + 1) + "_" + key; }
+/** Identifiant d'un paramètre d'enveloppe : envId (0, "attack") -> "env1_attack". */
+inline juce::String envId (int e, const char* key) { return "env" + juce::String (e + 1) + "_" + key; }
+/** Identifiant d'une macro : macroId (0) -> "macro1". */
+inline juce::String macroId (int m) { return "macro" + juce::String (m + 1); }
+
+constexpr int NumEnvelopes = 8;   // ENV 1 = volume ; ENV 2-4 visibles ; 5-8 se débloquent (phase 3)
+constexpr int VisibleEnvelopes = 4;
+constexpr int NumMacros = 8;
 
 namespace P
 {

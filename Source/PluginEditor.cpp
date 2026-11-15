@@ -33,6 +33,7 @@ struct IDGemsSynthEditor::Content : public juce::Component
     explicit Content (IDGemsSynthProcessor& p)
         : proc (p),
           synth (p),
+          macros (p),
           fx ("FX // BUS A B C", { IDG_T ("Phase 4 : bus A / B / C + Master, envois, bus → bus,"), IDG_T ("rack d'effets IDGems complet dans chaque bus, chaîne de sortie complète.") }),
           mod ("MODULATION", { IDG_T ("Phase 3 : enveloppes (déblocage jusqu'à 8), 10 LFO au crayon,"), IDG_T ("5 random / S&H, 8 macros, assignation par glisser-déposer.") }),
           arp (IDG_T ("ARPÉ // SÉQUENCEUR"), { IDG_T ("Phase 6 : arpégiateur, séquenceur 32 pas, gammes, mutation,"), IDG_T ("export MIDI en glisser-déposer, Note Spray.") }),
@@ -56,6 +57,7 @@ struct IDGemsSynthEditor::Content : public juce::Component
         presetName.setColour (juce::TextButton::buttonColourId, Theme::bg);
         for (auto* b : { &prevBtn, &nextBtn, &presetName, &saveBtn }) addAndMakeVisible (b);
         browser.flash = [this] (const juce::String& m) { flash (m); };
+        addAndMakeVisible (macros);
         addChildComponent (browser);
         refreshPresetName();
 
@@ -171,7 +173,8 @@ struct IDGemsSynthEditor::Content : public juce::Component
         presetName.setBounds (pr);
         flashArea = presetName.getBounds().translated (0, 20).withHeight (12).expanded (60, 0);
 
-        keyboard.setBounds (r.removeFromBottom (76).reduced (12, 5));
+        keyboard.setBounds (r.removeFromBottom (72).reduced (8, 4));
+        macros.setBounds (r.removeFromLeft (92).reduced (6, 6).withTrimmedRight (-4));
         for (auto* pg : pages) pg->setBounds (r);
         browser.setBounds (getLocalBounds());
     }
@@ -180,6 +183,7 @@ struct IDGemsSynthEditor::Content : public juce::Component
     IDGemsSynthProcessor& proc;
     juce::OwnedArray<juce::TextButton> tabs;
     SynthPage synth;
+    MacroColumn macros;
     ComingSoonPage fx, mod, arp, exp;
     std::vector<juce::Component*> pages;
     juce::TextButton panicBtn;

@@ -9,7 +9,7 @@
 class IDGemsSynthEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
-    static constexpr int baseW = 1360, baseH = 900;
+    static constexpr int baseW = 1500, baseH = 900;
 
     explicit IDGemsSynthEditor (IDGemsSynthProcessor&);
     ~IDGemsSynthEditor() override;

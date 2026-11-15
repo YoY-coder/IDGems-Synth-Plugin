@@ -369,69 +369,6 @@ void OscDisplay::paintSample (juce::Graphics& g, juce::Rectangle<float> r)
 }
 
 // =============================================================================
-// EnvelopeView
-// =============================================================================
-void EnvelopeView::tick()
-{
-    float h = 0.0f;
-    int k = 1;
-    for (auto* id : { P::env1Delay, P::env1Attack, P::env1Hold, P::env1Decay, P::env1Sustain, P::env1Release, P::env1ACurve, P::env1DCurve, P::env1RCurve })
-        h += proc.getValue (id) * (float) (k++ * 31);
-    if (std::abs (h - lastHash) > 1.0e-6f) { lastHash = h; repaint(); }
-}
-
-void EnvelopeView::paint (juce::Graphics& g)
-{
-    auto r = getLocalBounds().toFloat().reduced (4.0f);
-    g.setColour (Theme::bg.withAlpha (0.6f));
-    g.fillRect (r);
-    auto plot = r.reduced (8.0f, 10.0f);
-
-    const float d = proc.getValue (P::env1Delay), a = juce::jmax (Envelope::minAttackMs, proc.getValue (P::env1Attack)),
-                h = proc.getValue (P::env1Hold), dc = juce::jmax (Envelope::minAttackMs, proc.getValue (P::env1Decay)),
-                s = proc.getValue (P::env1Sustain), rl = juce::jmax (Envelope::minReleaseMs, proc.getValue (P::env1Release));
-    const float ac = proc.getValue (P::env1ACurve), dcv = proc.getValue (P::env1DCurve), rc = proc.getValue (P::env1RCurve);
-
-    // échelle temporelle compressée (racine) pour que les temps courts restent lisibles
-    auto w = [] (float ms) { return std::sqrt (juce::jmax (0.0f, ms)); };
-    const float sustainW = juce::jmax (w (a) + w (dc), 20.0f) * 0.35f;
-    const float total = w (d) + w (a) + w (h) + w (dc) + sustainW + w (rl);
-    const float px = plot.getWidth() / juce::jmax (1.0f, total);
-    auto Y = [&] (float lvl) { return plot.getBottom() - lvl * plot.getHeight(); };
-
-    juce::Path p;
-    float x = plot.getX();
-    p.startNewSubPath (x, Y (0));
-    x += w (d) * px; p.lineTo (x, Y (0));
-    const float x0 = x, aw = w (a) * px;
-    for (int i = 1; i <= 32; ++i) { const float t = (float) i / 32.0f; p.lineTo (x0 + t * aw, Y (Envelope::shape (t, ac))); }
-    x += aw;
-    x += w (h) * px; p.lineTo (x, Y (1));
-    const float x1 = x, dw = w (dc) * px;
-    for (int i = 1; i <= 32; ++i) { const float t = (float) i / 32.0f; p.lineTo (x1 + t * dw, Y (1.0f + (s - 1.0f) * (1.0f - Envelope::shape (1.0f - t, -dcv)))); }
-    x += dw;
-    x += sustainW * px; p.lineTo (x, Y (s));
-    const float x2 = x, rw = w (rl) * px;
-    for (int i = 1; i <= 32; ++i) { const float t = (float) i / 32.0f; p.lineTo (x2 + t * rw, Y (s * Envelope::shape (1.0f - t, -rc))); }
-
-    juce::Path fill (p);
-    fill.lineTo (plot.getRight(), Y (0));
-    fill.closeSubPath();
-    g.setGradientFill (juce::ColourGradient (Theme::accent.withAlpha (0.28f), 0.0f, plot.getY(), Theme::accent.withAlpha (0.0f), 0.0f, plot.getBottom(), false));
-    g.fillPath (fill);
-    g.setColour (Theme::accent.withAlpha (0.3f));
-    g.strokePath (p, juce::PathStrokeType (5.0f));
-    g.setColour (Theme::accent.brighter (0.3f));
-    g.strokePath (p, juce::PathStrokeType (1.6f));
-
-    // repère de fin de sustain (relâchement de la note)
-    g.setColour (Theme::blue.withAlpha (0.6f));
-    g.drawVerticalLine ((int) x2, plot.getY(), plot.getBottom());
-    g.setFont (Theme::mono (9.0f));
-    g.drawText ("NOTE OFF", juce::Rectangle<float> (x2 + 3.0f, plot.getY() - 8.0f, 60.0f, 10.0f), juce::Justification::left);
-}
-
-// =============================================================================
 // Scope
 // =============================================================================
 void Scope::tick()

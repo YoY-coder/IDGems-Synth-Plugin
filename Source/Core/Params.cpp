@@ -91,6 +91,10 @@ juce::String helpFor (const juce::String& fullId)
     // les paramètres d'Osc A et d'Osc B partagent les mêmes textes
     auto id = fullId.startsWith ("oscb_") ? "osca_" + fullId.substring (5) : fullId;
     id = id.startsWith ("f2_") ? "f1_" + id.substring (3) : id;
+    if (id.startsWith ("env") && id.length() > 4 && id[3] != '1' && id[4] == '_') id = "env1_" + id.substring (5);
+    if (id.startsWith ("macro"))
+        return id == "macro8" ? IDG_T ("Macro Chaos : pilotera d'un seul geste l'intensité générale du désordre (phase 3 / 7).")
+                              : IDG_T ("Macro : glisser vers n'importe quel potard pour l'assigner (phase 3).");
     static const std::map<juce::String, juce::String> h {
         { "osca_on",      IDG_T ("Active / coupe l'oscillateur.") },
         { "osca_mode",    IDG_T ("Moteur de l'oscillateur : Wavetable, Sample (un fichier joué à la hauteur des notes) ou Multisample (plusieurs fichiers répartis sur le clavier). Granulaire et Spectral arrivent en phase 5.") },
@@ -230,16 +234,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     }
     B.c (P::filtSerial, "Filter Routing", { IDG_T ("Série"), IDG_T ("Parallèle") }, 0);
 
-    // ---- Enveloppe 1
-    B.t (P::env1Delay, "Env 1 Delay", 5000.0f, 300.0f, 0.0f);
-    B.t (P::env1Attack, "Env 1 Attack", 10000.0f, 400.0f, 2.0f);
-    B.t (P::env1Hold, "Env 1 Hold", 5000.0f, 300.0f, 0.0f);
-    B.t (P::env1Decay, "Env 1 Decay", 20000.0f, 600.0f, 400.0f);
-    B.f (P::env1Sustain, "Env 1 Sustain", 0.0f, 1.0f, 0.8f, pctText);
-    B.t (P::env1Release, "Env 1 Release", 20000.0f, 600.0f, 250.0f);
-    B.f (P::env1ACurve, "Env 1 Attack Curve", -1.0f, 1.0f, 0.0f, curveText);
-    B.f (P::env1DCurve, "Env 1 Decay Curve", -1.0f, 1.0f, -0.5f, curveText);
-    B.f (P::env1RCurve, "Env 1 Release Curve", -1.0f, 1.0f, -0.5f, curveText);
+    // ---- Enveloppes (ENV 1 = volume des voix ; les autres deviennent des sources de modulation en phase 3)
+    for (int e = 0; e < NumEnvelopes; ++e)
+    {
+        const juce::String N = "Env " + juce::String (e + 1) + " ";
+        B.t (envId (e, "delay"), N + "Delay", 5000.0f, 300.0f, 0.0f);
+        B.t (envId (e, "attack"), N + "Attack", 10000.0f, 400.0f, 2.0f);
+        B.t (envId (e, "hold"), N + "Hold", 5000.0f, 300.0f, 0.0f);
+        B.t (envId (e, "decay"), N + "Decay", 20000.0f, 600.0f, e == 0 ? 400.0f : 800.0f);
+        B.f (envId (e, "sustain"), N + "Sustain", 0.0f, 1.0f, e == 0 ? 0.8f : 0.5f, pctText);
+        B.t (envId (e, "release"), N + "Release", 20000.0f, 600.0f, 250.0f);
+        B.f (envId (e, "acurve"), N + "Attack Curve", -1.0f, 1.0f, 0.0f, curveText);
+        B.f (envId (e, "dcurve"), N + "Decay Curve", -1.0f, 1.0f, -0.5f, curveText);
+        B.f (envId (e, "rcurve"), N + "Release Curve", -1.0f, 1.0f, -0.5f, curveText);
+    }
+
+    // ---- Macros (assignation par glisser-déposer en phase 3)
+    for (int m = 0; m < NumMacros; ++m)
+        B.f (macroId (m), m == NumMacros - 1 ? juce::String ("Macro Chaos") : "Macro " + juce::String (m + 1), 0.0f, 1.0f, 0.0f, pctText);
 
     // ---- Voix / jeu
     B.i (P::voices, "Voices", 1, MaxVoices, 16);

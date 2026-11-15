@@ -84,19 +84,6 @@ private:
     std::vector<float> overview; // crêtes du sample (mise en cache)
 };
 
-/** Courbe de l'enveloppe 1 (DAHDSR + courbes). */
-class EnvelopeView : public juce::Component
-{
-public:
-    explicit EnvelopeView (IDGemsSynthProcessor& p) : proc (p) {}
-    void tick();
-    void paint (juce::Graphics&) override;
-
-private:
-    IDGemsSynthProcessor& proc;
-    float lastHash = -1.0f;
-};
-
 /** Oscilloscope de sortie (version simple ; la version « corrompue » arrive avec la DA complète). */
 class Scope : public juce::Component
 {

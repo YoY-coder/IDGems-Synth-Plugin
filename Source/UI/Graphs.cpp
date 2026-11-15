@@ -241,11 +241,12 @@ void FilterView::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheel
 // =============================================================================
 // EnvelopeEditor
 // =============================================================================
-EnvelopeEditor::EnvelopeEditor (IDGemsSynthProcessor& p)
-    : LiveGraph (p, { P::env1Delay, P::env1Attack, P::env1Hold, P::env1Decay, P::env1Sustain, P::env1Release, P::env1ACurve, P::env1DCurve, P::env1RCurve }),
-      delay (drag (p, P::env1Delay)), attack (drag (p, P::env1Attack)), hold (drag (p, P::env1Hold)), decay (drag (p, P::env1Decay)),
-      sustain (drag (p, P::env1Sustain)), release (drag (p, P::env1Release)), aCurve (drag (p, P::env1ACurve)),
-      dCurve (drag (p, P::env1DCurve)), rCurve (drag (p, P::env1RCurve))
+EnvelopeEditor::EnvelopeEditor (IDGemsSynthProcessor& p, int e)
+    : LiveGraph (p, { envId (e, "delay"), envId (e, "attack"), envId (e, "hold"), envId (e, "decay"), envId (e, "sustain"),
+                      envId (e, "release"), envId (e, "acurve"), envId (e, "dcurve"), envId (e, "rcurve") }),
+      delay (drag (p, envId (e, "delay"))), attack (drag (p, envId (e, "attack"))), hold (drag (p, envId (e, "hold"))),
+      decay (drag (p, envId (e, "decay"))), sustain (drag (p, envId (e, "sustain"))), release (drag (p, envId (e, "release"))),
+      aCurve (drag (p, envId (e, "acurve"))), dCurve (drag (p, envId (e, "dcurve"))), rCurve (drag (p, envId (e, "rcurve")))
 {
     setTooltip (IDG_T ("Glisser les points : temps (horizontal) et sustain (vertical).\n"
                        "Glisser les petits losanges au milieu des segments : courbes.\nDouble-clic sur un point : valeur par défaut."));

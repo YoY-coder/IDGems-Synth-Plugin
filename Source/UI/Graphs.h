@@ -74,7 +74,7 @@ private:
 class EnvelopeEditor : public LiveGraph
 {
 public:
-    explicit EnvelopeEditor (IDGemsSynthProcessor& p);
+    EnvelopeEditor (IDGemsSynthProcessor& p, int envIndex);
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
