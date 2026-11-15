@@ -25,7 +25,7 @@ OscPanel::OscPanel (IDGemsSynthProcessor& p, int o)
       proc (p), osc (o),
       on (p, oscId (o, "on"), "ON"),
       mode (p, oscId (o, "mode")), table (p, oscId (o, "table")), route (p, oscId (o, "route")),
-      display (p, o),
+      display (p, o), unisonView (p, o),
       pos (p, oscId (o, "pos"), "WT Pos"), level (p, oscId (o, "level"), "Level"), pan (p, oscId (o, "pan"), "Pan"),
       oct (p, oscId (o, "oct"), "Oct"), semi (p, oscId (o, "semi"), "Semi"), fine (p, oscId (o, "fine"), "Fine"),
       phase (p, oscId (o, "phase"), "Phase"), phRand (p, oscId (o, "phrand"), "Rand"),
@@ -56,7 +56,7 @@ OscPanel::OscPanel (IDGemsSynthProcessor& p, int o)
             if (safe != nullptr && ! fc.getResults().isEmpty()) safe->loadFiles (fc.getResults());
         });
     };
-    addAll (*this, { &on, &mode, &table, &route, &dice, &load, &display, &pos, &level, &pan, &oct, &semi, &fine, &phase, &phRand,
+    addAll (*this, { &on, &mode, &table, &route, &dice, &load, &display, &unisonView, &pos, &level, &pan, &oct, &semi, &fine, &phase, &phRand,
                      &unison, &detune, &blend, &spread, &stretch, &shift, &root, &loop,
                      &warp1, &warp1Src, &warp2, &warp2Src, &warp1Amt, &warp2Amt });
     updateVisibility();
@@ -94,6 +94,7 @@ void OscPanel::tick()
 {
     if ((int) proc.getValue (oscId (osc, "mode")) != lastMode) updateVisibility();
     display.tick();
+    unisonView.tick();
 }
 
 void OscPanel::paintOverChildren (juce::Graphics& g)
@@ -153,6 +154,7 @@ void OscPanel::resized()
     auto k2 = bottom;
     unisonLabel = k2.removeFromLeft (56);
     row (k2.removeFromLeft (k2.getWidth() * 4 / 7), { &unison, &detune, &blend, &spread });
+    unisonView.setBounds (k2.reduced (6, 4));
 }
 
 // =============================================================================
@@ -160,11 +162,12 @@ void OscPanel::resized()
 // =============================================================================
 SubPanel::SubPanel (IDGemsSynthProcessor& p)
     : Section ("Sub", Theme::accent),
+      view (p),
       on (p, P::subOn, "ON"), route (p, P::subRoute), shape (p, P::subShape), oct (p, P::subOct),
       level (p, P::subLevel, "Level"), pan (p, P::subPan, "Pan")
 {
     titleWidth = 44;
-    addAll (*this, { &on, &route, &shape, &oct, &level, &pan });
+    addAll (*this, { &view, &on, &route, &shape, &oct, &level, &pan });
 }
 
 void SubPanel::resized()
@@ -176,17 +179,19 @@ void SubPanel::resized()
     auto c = b.removeFromTop (26);
     shape.setBounds (c.removeFromLeft (c.getWidth() / 2).reduced (2, 1));
     oct.setBounds (c.reduced (2, 1));
-    b.removeFromTop (8);
-    row (b, { &level, &pan }, 6, 6);
+    b.removeFromTop (4);
+    row (b.removeFromBottom (62), { &level, &pan }, 6, 1);
+    view.setBounds (b.reduced (0, 2));
 }
 
 NoisePanel::NoisePanel (IDGemsSynthProcessor& p)
     : Section ("Noise", Theme::accent),
+      view (p),
       on (p, P::noiseOn, "ON"), route (p, P::noiseRoute), type (p, P::noiseType),
       level (p, P::noiseLevel, "Level"), pan (p, P::noisePan, "Pan"), tone (p, P::noiseTone, "Tone")
 {
     titleWidth = 58;
-    addAll (*this, { &on, &route, &type, &level, &pan, &tone });
+    addAll (*this, { &view, &on, &route, &type, &level, &pan, &tone });
 }
 
 void NoisePanel::resized()
@@ -196,8 +201,9 @@ void NoisePanel::resized()
     route.setBounds (h.removeFromRight (84));
     auto b = body();
     type.setBounds (b.removeFromTop (26).reduced (2, 1));
-    b.removeFromTop (8);
-    row (b, { &level, &pan, &tone }, 4, 6);
+    b.removeFromTop (4);
+    row (b.removeFromBottom (62), { &level, &pan, &tone }, 4, 1);
+    view.setBounds (b.reduced (0, 2));
 }
 
 // =============================================================================
@@ -205,7 +211,7 @@ void NoisePanel::resized()
 // =============================================================================
 FilterPanel::FilterPanel (IDGemsSynthProcessor& p, int i)
     : Section (i == 0 ? "Filtre 1" : "Filtre 2", Theme::blue),
-      index (i),
+      index (i), view (p, i),
       on (p, filtId (i, "on"), "ON", Theme::blue), type (p, filtId (i, "type")),
       cutoff (p, filtId (i, "cutoff"), "Cutoff", Theme::blue), reso (p, filtId (i, "reso"), "Reso", Theme::blue),
       drive (p, filtId (i, "drive"), "Drive", Theme::blue), key (p, filtId (i, "key"), "Key", Theme::blue),
@@ -217,7 +223,7 @@ FilterPanel::FilterPanel (IDGemsSynthProcessor& p, int i)
         serial = std::make_unique<ParamCombo> (p, P::filtSerial);
         addAndMakeVisible (*serial);
     }
-    addAll (*this, { &on, &type, &cutoff, &reso, &drive, &key, &mix });
+    addAll (*this, { &view, &on, &type, &cutoff, &reso, &drive, &key, &mix });
 }
 
 void FilterPanel::resized()
@@ -228,8 +234,8 @@ void FilterPanel::resized()
     type.setBounds (h.removeFromLeft (120));
     if (serial != nullptr) serial->setBounds (h.removeFromRight (100));
     auto b = body();
-    b.removeFromTop (6);
-    row (b, { &cutoff, &reso, &drive, &key, &mix }, 2, 8);
+    row (b.removeFromBottom (62), { &cutoff, &reso, &drive, &key, &mix }, 2, 1);
+    view.setBounds (b.reduced (0, 2));
 }
 
 // =============================================================================
@@ -248,7 +254,7 @@ EnvPanel::EnvPanel (IDGemsSynthProcessor& p)
 void EnvPanel::resized()
 {
     auto b = body();
-    auto right = b.removeFromRight (b.getWidth() * 52 / 100);
+    auto right = b.removeFromRight (b.getWidth() * 44 / 100);
     view.setBounds (b);
     right.removeFromLeft (6);
     auto r1 = right.removeFromTop (right.getHeight() / 2);
@@ -258,13 +264,14 @@ void EnvPanel::resized()
 
 VoicePanel::VoicePanel (IDGemsSynthProcessor& p)
     : Section ("Voix  //  jeu", Theme::blue),
+      view (p),
       mode (p, P::voiceMode), legato (p, P::glideLegato, "GLIDE LEGATO", Theme::blue),
       voices (p, P::voices, "Voix", Theme::blue), glide (p, P::glide, "Glide", Theme::blue),
       glideCurve (p, P::glideCurve, "Courbe", Theme::blue), velSens (p, P::velSens, IDG_T ("VÉLOCITÉ"), Theme::blue),
       bendRange (p, P::bendRange, "Bend", Theme::blue)
 {
     titleWidth = 120;
-    addAll (*this, { &mode, &legato, &voices, &glide, &glideCurve, &velSens, &bendRange });
+    addAll (*this, { &view, &mode, &legato, &voices, &glide, &glideCurve, &velSens, &bendRange });
 }
 
 void VoicePanel::resized()
@@ -274,8 +281,11 @@ void VoicePanel::resized()
     h.removeFromLeft (8);
     legato.setBounds (h.removeFromLeft (120));
     auto b = body();
-    b.removeFromTop (10);
-    row (b, { &voices, &glide, &glideCurve, &velSens, &bendRange }, 4, 10);
+    view.setBounds (b.removeFromLeft (b.getWidth() * 36 / 100).reduced (0, 2));
+    b.removeFromLeft (6);
+    auto r1 = b.removeFromTop (b.getHeight() / 2);
+    row (r1, { &glide, &glideCurve, &voices });
+    row (b.withTrimmedRight (b.getWidth() / 3), { &velSens, &bendRange });
 }
 
 // =============================================================================
@@ -291,16 +301,21 @@ void SynthPage::tick()
 {
     oscA.tick();
     oscB.tick();
+    sub.tick();
+    noise.tick();
+    f1.tick();
+    f2.tick();
     env.tick();
+    voice.tick();
 }
 
 void SynthPage::resized()
 {
     auto r = getLocalBounds().reduced (10, 8);
     const int gap = 8;
-    auto top = r.removeFromTop (r.getHeight() * 46 / 100);
+    auto top = r.removeFromTop (r.getHeight() * 43 / 100);
     r.removeFromTop (gap);
-    auto mid = r.removeFromTop (r.getHeight() / 2);
+    auto mid = r.removeFromTop (r.getHeight() * 54 / 100);
     r.removeFromTop (gap);
     auto bottom = r;
 

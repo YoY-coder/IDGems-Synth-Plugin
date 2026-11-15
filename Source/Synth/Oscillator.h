@@ -263,7 +263,7 @@ public:
     float last = 0.0f;     // dernière sortie mono (source de cross-modulation)
     bool wrapped = false;  // la voix d'unison centrale vient de boucler (source de hard sync)
 
-private:
+public:
     /** Warps qui agissent sur la phase de lecture (et gain pour PWM / flip / AM / RM). */
     static inline float warpPhase (int mode, float amt, float ph, float mod, float& gain)
     {
@@ -318,6 +318,7 @@ private:
         else if (mode == WarpRM) gain *= (1.0f - amt) + amt * mod;
     }
 
+private:
     /** Lecture de sample (interpolation d'Hermite), boucle avec fondu enchaîné, fin sans clic. */
     inline void readSample (const SampleZone& z, const OscParams& p, int u, float& l, float& r)
     {

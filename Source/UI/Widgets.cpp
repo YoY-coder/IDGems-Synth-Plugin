@@ -1,5 +1,6 @@
 #include "Widgets.h"
 #include "../Synth/Envelope.h"
+#include "../Synth/Oscillator.h"
 
 namespace idgs::ui
 {
@@ -185,7 +186,9 @@ void OscDisplay::tick()
     const int t = (int) proc.getValue (oscId (osc, "table"));
     const int mode = (int) proc.getValue (oscId (osc, "mode"));
     const float pos = proc.getValue (oscId (osc, "pos"));
-    const int ver = proc.assetsVersion.load();
+    int ver = proc.assetsVersion.load();
+    for (auto* k : { "warp1", "warp1amt", "warp2", "warp2amt", "stretch", "shift" })
+        ver += (int) (proc.getValue (oscId (osc, k)) * 997.0f) * 7919;
     const bool msgVisible = message.isNotEmpty() && juce::Time::getMillisecondCounter() - messageTime < 4000;
     if (t != lastTable || mode != lastMode || ver != lastVersion || std::abs (pos - lastPos) > 1.0e-4f || (message.isNotEmpty() && ! msgVisible))
     {
@@ -237,13 +240,24 @@ void OscDisplay::paintTable (juce::Graphics& g, juce::Rectangle<float> r)
     const float depthX = r.getWidth() * 0.16f, depthY = r.getHeight() * 0.30f;
     auto plot = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + depthY + 4.0f, r.getWidth() - depthX - 8.0f, r.getHeight() - depthY - 14.0f);
 
-    auto pathFor = [&] (float framePos, float offset)
+    // warps de l'oscillateur appliqués à l'affichage (ceux qui ne dépendent pas d'une autre source)
+    int wm[2];
+    float wa[2];
+    for (int w = 0; w < 2; ++w)
+    {
+        wm[w] = (int) proc.getValue (oscId (osc, w == 0 ? "warp1" : "warp2"));
+        wa[w] = proc.getValue (oscId (osc, w == 0 ? "warp1amt" : "warp2amt"));
+    }
+    auto pathFor = [&] (float framePos, float offset, bool warped = false)
     {
         juce::Path p;
         for (int i = 0; i <= pts; ++i)
         {
-            const float ph = (float) i / (float) pts;
-            const float v = wt.readMorph (framePos, 2, ph);
+            float ph = (float) i / (float) pts;
+            float gain = 1.0f;
+            if (warped)
+                for (int w = 0; w < 2; ++w) ph = OscUnit::warpPhase (wm[w], wa[w], ph, 0.0f, gain);
+            const float v = wt.readMorph (framePos, 2, juce::jlimit (0.0f, 0.9999f, ph)) * gain;
             const float x = plot.getX() + ph * plot.getWidth() + offset * depthX;
             const float y = plot.getCentreY() - v * plot.getHeight() * 0.45f - offset * depthY;
             if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
@@ -258,7 +272,7 @@ void OscDisplay::paintTable (juce::Graphics& g, juce::Rectangle<float> r)
         g.setColour (Theme::blue.withAlpha (0.10f + 0.08f * (1.0f - std::abs (fp - pos))));
         g.strokePath (pathFor (fp, fp), juce::PathStrokeType (1.0f));
     }
-    auto cur = pathFor (pos, pos);
+    auto cur = pathFor (pos, pos, true);
     g.setColour (juce::Colour (0xffff1e3c).withAlpha (0.45f));
     g.strokePath (cur, juce::PathStrokeType (1.4f), juce::AffineTransform::translation (-1.5f, 0.0f));
     g.setColour (Theme::blue.withAlpha (0.45f));
@@ -271,6 +285,35 @@ void OscDisplay::paintTable (juce::Graphics& g, juce::Rectangle<float> r)
     g.setFont (Theme::mono (9.5f));
     g.setColour (Theme::textDim);
     g.drawText (juce::String (frames) + " FRAMES  " + juce::String (juce::roundToInt (pos * 100.0f)) + " %", r.reduced (6.0f, 3.0f), juce::Justification::topRight);
+
+    // mini-spectre : position des harmoniques (étirées / décalées par l'inharmonicité) et leur niveau
+    const float stretch = proc.getValue (oscId (osc, "stretch")), shift = proc.getValue (oscId (osc, "shift"));
+    const bool inharm = std::abs (stretch) > 0.002f || std::abs (shift) > 0.002f;
+    auto sp = juce::Rectangle<float> (r.getRight() - r.getWidth() * 0.42f - 4.0f, r.getBottom() - r.getHeight() * 0.26f - 4.0f, r.getWidth() * 0.42f, r.getHeight() * 0.26f);
+    g.setColour (Theme::bg.withAlpha (0.85f));
+    g.fillRect (sp);
+    g.setColour (Theme::line);
+    g.drawRect (sp, 1.0f);
+    const float fp = pos * (float) (frames - 1);
+    const int f0 = (int) fp, f1 = juce::jmin (f0 + 1, frames - 1);
+    const float fx = fp - (float) f0;
+    constexpr int bars = 32;
+    float ampMax = 1.0e-6f;
+    for (int k = 1; k <= bars; ++k) ampMax = juce::jmax (ampMax, wt.partialAmp (f0, k));
+    const float expo = 1.0f + stretch * 0.5f;
+    for (int k = 1; k <= bars; ++k)
+    {
+        const float ratio = std::pow ((float) k, expo) + shift;
+        if (ratio <= 0.0f || ratio > (float) bars + 1.0f) continue;
+        const float a = wt.partialAmp (f0, k) + (wt.partialAmp (f1, k) - wt.partialAmp (f0, k)) * fx;
+        const float h = std::sqrt (a / ampMax) * (sp.getHeight() - 6.0f);
+        const float x = sp.getX() + 3.0f + (ratio / ((float) bars + 1.0f)) * (sp.getWidth() - 6.0f);
+        g.setColour ((inharm ? Theme::accent : Theme::blue).withAlpha (0.85f));
+        g.fillRect (x - 0.75f, sp.getBottom() - 3.0f - h, 1.5f, h);
+    }
+    g.setFont (Theme::mono (8.0f));
+    g.setColour (Theme::textDim);
+    g.drawText (inharm ? IDG_T ("SPECTRE · INHARMONIQUE") : "SPECTRE", sp.reduced (3.0f, 1.0f), juce::Justification::topLeft);
 }
 
 void OscDisplay::paintSample (juce::Graphics& g, juce::Rectangle<float> r)

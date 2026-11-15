@@ -1,5 +1,5 @@
 #pragma once
-#include "Widgets.h"
+#include "Graphs.h"
 
 namespace idgs::ui
 {
@@ -46,6 +46,7 @@ private:
     ParamCombo mode, table, route;
     juce::TextButton dice { juce::String (juce::CharPointer_UTF8 ("D\xc3\x89")) }, load { "CHARGER" };
     OscDisplay display;
+    UnisonView unisonView;
     Knob pos, level, pan, oct, semi, fine, phase, phRand;
     Knob unison, detune, blend, spread, stretch, shift, root;
     ParamToggle loop;
@@ -61,8 +62,10 @@ class SubPanel : public Section
 public:
     explicit SubPanel (IDGemsSynthProcessor& p);
     void resized() override;
+    void tick() { view.tick(); }
 
 private:
+    SubView view;
     ParamToggle on;
     ParamCombo route, shape, oct;
     Knob level, pan;
@@ -73,8 +76,10 @@ class NoisePanel : public Section
 public:
     explicit NoisePanel (IDGemsSynthProcessor& p);
     void resized() override;
+    void tick() { view.tick(); }
 
 private:
+    NoiseView view;
     ParamToggle on;
     ParamCombo route, type;
     Knob level, pan, tone;
@@ -85,9 +90,11 @@ class FilterPanel : public Section
 public:
     FilterPanel (IDGemsSynthProcessor& p, int index);
     void resized() override;
+    void tick() { view.tick(); }
 
 private:
     int index;
+    FilterView view;
     ParamToggle on;
     ParamCombo type;
     std::unique_ptr<ParamCombo> serial; // uniquement sur le filtre 1
@@ -102,7 +109,7 @@ public:
     void tick() { view.tick(); }
 
 private:
-    EnvelopeView view;
+    EnvelopeEditor view;
     Knob delay, attack, hold, decay, sustain, release, aCurve, dCurve, rCurve;
 };
 
@@ -111,8 +118,10 @@ class VoicePanel : public Section
 public:
     explicit VoicePanel (IDGemsSynthProcessor& p);
     void resized() override;
+    void tick() { view.tick(); }
 
 private:
+    GlideView view;
     ParamCombo mode;
     ParamToggle legato;
     Knob voices, glide, glideCurve, velSens, bendRange;
