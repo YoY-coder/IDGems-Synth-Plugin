@@ -14,6 +14,11 @@ Demandes ajoutées en cours de développement, en plus du cahier des charges ini
   (courbe de filtre, points d'enveloppe...). Surbrillance des cibles pendant le glissement, anneau coloré
   autour de la cible, quantité réglable sur l'anneau, nombre de cibles affiché, clic droit = liste des
   assignations (supprimer / inverser). Même système pour LFO, enveloppes 2-8, random, vélocité, molette.
+- **Prévisualisation au survol** :
+  - en survolant un potard / une valeur : ses modulations apparaissent (plage de modulation sur l'anneau,
+    valeur modulée en mouvement, sources concernées mises en surbrillance avec leur couleur, quantité affichée) ;
+  - en survolant une source (macro, LFO, enveloppe...) : toutes ses cibles s'allument dans l'interface ;
+  - pendant un glisser-déposer : aperçu de l'effet sur la cible survolée avant de lâcher.
 - Éditeur de wavetable au crayon (même outil que le crayon des LFO).
 
 ## Phase 6 — Arpé / Séq
