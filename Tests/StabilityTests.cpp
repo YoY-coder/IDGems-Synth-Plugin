@@ -300,6 +300,7 @@ int main (int argc, char** argv)
         {
             for (auto* p : params) if (rnd.nextFloat() < 0.4f) p->setValueNotifyingHost (rnd.nextFloat());
             h.set (P::masterVol, 6.0f);
+            h.set (P::ceiling, -0.3f); // plafond fixe : le pic est comparé à une seule valeur
             for (int k = 0; k < 4; ++k) h.noteOn (rnd.nextInt ({ 0, 128 }), rnd.nextFloat(), rnd.nextInt (256));
             if (rnd.nextBool()) h.noteOff (rnd.nextInt ({ 0, 128 }), rnd.nextInt (256));
             h.run (0.03);
