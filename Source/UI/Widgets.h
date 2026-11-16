@@ -6,22 +6,44 @@ namespace idgs::ui
 {
 using idg::ui::Theme;
 
-/** Potard lié à un paramètre (style néon d'IDGems). Double-clic = valeur par défaut,
-    La valeur s'affiche au survol. */
-class Knob : public juce::Slider
+/** Potard lié à un paramètre (style néon d'IDGems). Double-clic = valeur par défaut, valeur affichée au survol.
+    Cible de modulation : on y dépose une source (glisser-déposer), anneaux colorés = modulations,
+    Alt / Ctrl + glisser = profondeur de la dernière modulation, clic droit = liste des modulations. */
+class Knob : public juce::Slider, public juce::DragAndDropTarget, private juce::Timer
 {
 public:
     Knob (IDGemsSynthProcessor& p, const juce::String& paramId, const juce::String& label, juce::Colour colour = Theme::accent);
     void paint (juce::Graphics&) override;
-    void mouseEnter (const juce::MouseEvent&) override { hovering = true; repaint(); }
-    void mouseExit (const juce::MouseEvent&) override { hovering = false; repaint(); }
+    void mouseEnter (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    juce::String getTooltip() override;
     void setLabel (const juce::String& l) { label = l; repaint(); }
 
+    bool isInterestedInDragSource (const SourceDetails&) override;
+    void itemDragEnter (const SourceDetails&) override { dropHover = true; repaint(); }
+    void itemDragExit (const SourceDetails&) override { dropHover = false; repaint(); }
+    void itemDropped (const SourceDetails&) override;
+
+    /** Appelé par le timer de l'éditeur : redessine si la modulation / le survol a changé. */
+    void tick();
+    int getParamIndex() const { return paramIdx; }
+
 private:
+    void timerCallback() override { tick(); }
+    void showModMenu();
+    IDGemsSynthProcessor& proc;
     juce::RangedAudioParameter* param = nullptr;
+    int paramIdx = -1, field = -1;
     juce::String label;
     juce::Colour colour;
-    bool hovering = false;
+    bool hovering = false, dropHover = false;
+    int depthSlot = -1;
+    float depthStart = 0.0f;
+    float lastMod = -2.0f;
+    int lastVersion = -1, lastHoverSrc = -2, lastDragSrc = -2;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
 };
 
@@ -61,7 +83,7 @@ private:
 
 /** Affichage d'un oscillateur : wavetable (frames empilées en perspective, frame courante en
     surbrillance) ou forme d'onde du sample (point de départ, zones du multisample). */
-class OscDisplay : public juce::Component
+class OscDisplay : public juce::Component, public juce::DragAndDropTarget
 {
 public:
     OscDisplay (IDGemsSynthProcessor& p, int oscIndex) : proc (p), osc (oscIndex) {}
@@ -70,7 +92,30 @@ public:
     void setDropHover (bool h) { dropHover = h; repaint(); }
     void setMessage (const juce::String& m) { message = m; messageTime = juce::Time::getMillisecondCounter(); repaint(); }
 
+    // glisser sur l'affichage : position dans la wavetable (vertical, comme Vital) / départ du sample (horizontal)
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+    /** Crayon : dessin direct de la frame courante. */
+    void setPencil (bool p) { pencil = p; editBuf.clear(); repaint(); }
+
+    // cible de modulation (position dans la table)
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.toString().startsWith ("mod:"); }
+    void itemDragEnter (const SourceDetails&) override { modHover = true; repaint(); }
+    void itemDragExit (const SourceDetails&) override { modHover = false; repaint(); }
+    void itemDropped (const SourceDetails&) override;
+
 private:
+    void setPos (float v);
+    void paintPencil (juce::Graphics&, juce::Rectangle<float>);
+    void drawTo (juce::Point<float> p);
+    bool pencil = false, modHover = false;
+    std::vector<float> editBuf;
+    int editFrame = 0;
+    juce::Point<float> lastDraw;
+    float dragStartPos = 0.0f;
     void paintTable (juce::Graphics&, juce::Rectangle<float>);
     void paintSample (juce::Graphics&, juce::Rectangle<float>);
 

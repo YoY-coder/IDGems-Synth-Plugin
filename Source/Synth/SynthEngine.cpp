@@ -31,6 +31,7 @@ void Voice::prepare (double sampleRate)
 {
     sr = sampleRate;
     env.prepare (sr);
+    for (auto& e : modEnv) e.prepare (sr);
     for (auto& o : osc) o.prepare (sr);
     noise.prepare (sr);
     for (auto& f : filt) f.prepare (sr);
@@ -42,6 +43,7 @@ void Voice::prepare (double sampleRate)
 void Voice::kill()
 {
     env.reset();
+    for (auto& e : modEnv) e.reset();
     fading = false;
     fade = 1.0f;
     note = pendingNote = -1;
@@ -79,6 +81,12 @@ void Voice::start (int n, float vel, uint64_t a, const VoiceParams& p, idg::dsp:
 
     env.reset();
     env.noteOn();
+    for (auto& e : modEnv) { e.reset(); e.noteOn(); }
+    for (int i = 0; i < NumLfos; ++i) { lfoPh[i] = 0.0f; lfoSm[i] = -1.0f; }
+    noteRand = rng.uni();
+    ageSec = 0.0f;
+    for (auto& v : mod01) v = -1.0f;
+    local = p;
     ctrl = 0;
 }
 
@@ -114,8 +122,120 @@ void Voice::steal (int n, float vel, uint64_t a, float fromPitch, bool glide)
     sustained = false;
 }
 
-void Voice::control (const VoiceParams& p)
+void Voice::computeModulation (const VoiceParams& p)
 {
+    local = p;
+    const ModBlock* mb = p.mod;
+    ageSec += (float) ControlRate / (float) sr;
+    if (mb == nullptr || mb->numSlots == 0) return;
+
+    // ---- sources propres à la voix
+    for (int e = 1; e < NumEnvelopes; ++e)
+        if (mb->srcUsed[MSrcEnv0 + e])
+        {
+            float v = 0.0f;
+            for (int k = 0; k < ControlRate; ++k) v = modEnv[e].next (mb->env[e]);
+            srcVal[MSrcEnv0 + e] = v;
+        }
+    srcVal[MSrcEnv0] = env.getLevel();
+    for (int i = 0; i < NumLfos; ++i)
+    {
+        if (! mb->srcUsed[MSrcLfo0 + i]) continue;
+        const auto& L = mb->lfo[i];
+        float v;
+        if (L.mode == LfoNoteVoice || L.mode == LfoOneShot)
+        {
+            float ph = lfoPh[i] + L.phase;
+            ph = L.mode == LfoOneShot ? juce::jlimit (0.0f, 0.9999f, ph) : ph - std::floor (ph);
+            v = L.table[juce::jlimit (0, idg::LfoShape::tableSize - 1, (int) (ph * idg::LfoShape::tableSize))];
+            lfoPh[i] += L.inc * (float) ControlRate;
+            if (L.mode != LfoOneShot) lfoPh[i] -= std::floor (lfoPh[i]);
+            const float a = L.smoothMs <= 0.01f ? 0.0f : std::exp (-(float) ControlRate / (L.smoothMs * 0.001f * (float) sr));
+            lfoSm[i] = lfoSm[i] < 0.0f ? v : v + (lfoSm[i] - v) * a;
+            v = lfoSm[i];
+        }
+        else v = mb->global[MSrcLfo0 + i];
+        if (L.fadeMs > 0.5f) v *= juce::jmin (1.0f, ageSec * 1000.0f / L.fadeMs);
+        srcVal[MSrcLfo0 + i] = v;
+    }
+    srcVal[MSrcVelocity] = velocity;
+    srcVal[MSrcNote] = (float) note / 127.0f;
+    srcVal[MSrcNoteRandom] = noteRand;
+
+    // ---- somme des modulations par cible (en fraction de la course du paramètre)
+    float acc[NumModFields] {};
+    for (int s = 0; s < mb->numSlots; ++s)
+    {
+        const auto& a = mb->slots[s];
+        float v = sourceIsPerVoice (a.src) ? srcVal[a.src] : mb->global[a.src];
+        if (a.bipolar) v = v * 2.0f - 1.0f;
+        acc[a.field] += a.depth * v;
+    }
+
+    // ---- application aux réglages locaux de la voix
+    const auto& T = *mb->targets;
+    for (int f = 0; f < NumModFields; ++f)
+    {
+        if (! mb->fieldUsed[f]) { mod01[f] = -1.0f; continue; }
+        const float n01 = juce::jlimit (0.0f, 1.0f, mb->base01[f] + acc[f]);
+        mod01[f] = n01;
+        const float real = T.toReal (f, n01);
+        if (f < NumOscFields * NumOscs)
+        {
+            auto& o = local.osc[f / NumOscFields];
+            switch (f % NumOscFields)
+            {
+                case FOscPos: o.pos = real; break;
+                case FOscLevel: o.level = real; break;
+                case FOscPan: o.pan = real; break;
+                case FOscSemi: o.pitch += real - T.toReal (f, mb->base01[f]); break;
+                case FOscFine: o.pitch += (real - T.toReal (f, mb->base01[f])) * 0.01f; break;
+                case FOscDetune: o.detune = real; break;
+                case FOscBlend: o.blend = real; break;
+                case FOscSpread: o.spread = real; break;
+                case FOscStretch: o.stretch = real; break;
+                case FOscShift: o.shift = real; break;
+                case FOscWarp1: o.warpAmt[0] = real; break;
+                case FOscWarp2: o.warpAmt[1] = real; break;
+                default: break;
+            }
+            continue;
+        }
+        if (f >= FFilt0 && f < FFilt0 + 2 * NumFiltFields)
+        {
+            auto& fp = local.filt[(f - FFilt0) / NumFiltFields];
+            switch ((f - FFilt0) % NumFiltFields)
+            {
+                case FFCutoff: fp.cutoff = real; break;
+                case FFReso: fp.reso = real; break;
+                case FFDrive: fp.drive = real; break;
+                case FFKey: fp.key = real; break;
+                case FFMix: fp.mix = real; break;
+                default: break;
+            }
+            continue;
+        }
+        switch (f)
+        {
+            case FSubLevel: local.sub.level = real; break;
+            case FSubPan: local.sub.pan = real; break;
+            case FNoiseLevel: local.noise.level = real; break;
+            case FNoisePan: local.noise.pan = real; break;
+            case FNoiseTone: local.noise.tone = real; break;
+            case FEnvAttack: local.env.attackMs = real; break;
+            case FEnvDecay: local.env.decayMs = real; break;
+            case FEnvSustain: local.env.sustain = real; break;
+            case FEnvRelease: local.env.releaseMs = real; break;
+            case FGlide: local.glideMs = real; break;
+            default: break;
+        }
+    }
+}
+
+void Voice::control (const VoiceParams& base)
+{
+    computeModulation (base);
+    const VoiceParams& p = local;
     // glide
     if (gT < 1.0f)
     {
@@ -152,16 +272,23 @@ void Voice::control (const VoiceParams& p)
     }
 }
 
-void Voice::render (float* L, float* R, int n, const VoiceParams& p, idg::dsp::Rng& rng)
+void Voice::render (float* L, float* R, int n, const VoiceParams& base, idg::dsp::Rng& rng)
 {
     const auto& basic = WavetableBank::get()[0];
-    const float velGain = (1.0f - p.velSens + p.velSens * velocity * velocity) * voiceHeadroom;
-    const float tLvl[4] { p.osc[0].on ? p.osc[0].level : 0.0f, p.osc[1].on ? p.osc[1].level : 0.0f,
-                          p.sub.on ? p.sub.level : 0.0f, p.noise.on ? p.noise.level : 0.0f };
-    float tpl[2], tpr[2];
-    panGains (p.sub.pan, tpl[0], tpr[0]);
-    panGains (p.noise.pan, tpl[1], tpr[1]);
-    const float bothGain = p.serial ? 1.0f : 0.7071f;
+    const VoiceParams& p = local; // réglages modulés (mis à jour par control())
+    const float velGain = (1.0f - base.velSens + base.velSens * velocity * velocity) * voiceHeadroom;
+    const float bothGain = base.serial ? 1.0f : 0.7071f;
+    float tLvl[4], tpl[2], tpr[2];
+    auto targets = [&]
+    {
+        tLvl[0] = p.osc[0].on ? p.osc[0].level : 0.0f;
+        tLvl[1] = p.osc[1].on ? p.osc[1].level : 0.0f;
+        tLvl[2] = p.sub.on ? p.sub.level : 0.0f;
+        tLvl[3] = p.noise.on ? p.noise.level : 0.0f;
+        panGains (p.sub.pan, tpl[0], tpr[0]);
+        panGains (p.noise.pan, tpl[1], tpr[1]);
+    };
+    targets();
 
     for (int i = 0; i < n; ++i)
     {
@@ -176,13 +303,13 @@ void Voice::render (float* L, float* R, int n, const VoiceParams& p, idg::dsp::R
                 const bool keyUp = pendingKeyUp;
                 const int pn = pendingNote;
                 pendingNote = -1;
-                start (pn, pendingVel, pendingAge, p, rng, pendingFrom, pendingGlide);
+                start (pn, pendingVel, pendingAge, base, rng, pendingFrom, pendingGlide);
                 if (keyUp) { keyDown = false; release(); }
                 e = env.next (p.env);
             }
         }
         if (! env.isActive() && ! fading) { note = -1; return; }
-        if (ctrl <= 0) { control (p); ctrl = ControlRate; }
+        if (ctrl <= 0) { control (base); targets(); ctrl = ControlRate; }
         --ctrl;
 
         for (int k = 0; k < 4; ++k) lvl[k] += (tLvl[k] - lvl[k]) * smoothCoef;
@@ -265,6 +392,7 @@ void SynthEngine::reset()
 {
     for (auto& v : voices) v.kill();
     bend = 0.0f;
+    modWheel = aftertouch = 0.0f;
     sustainPedal = false;
     numHeld = 0;
     monoIdx = -1;
@@ -349,9 +477,18 @@ void SynthEngine::removeHeld (int n)
         }
 }
 
+const Voice* SynthEngine::newestVoice() const
+{
+    const Voice* best = nullptr;
+    for (const auto& v : voices)
+        if (! v.isFree() && (best == nullptr || v.age > best->age)) best = &v;
+    return best;
+}
+
 void SynthEngine::noteOn (int n, float vel, const VoiceParams& p)
 {
     ++ageCounter;
+    ++noteOnCount;
     bool anyHeld = numHeld > 0;
     for (const auto& v : voices) if (! v.isFree() && v.keyDown) anyHeld = true;
     const bool glideOn = p.glideMs > 0.5f && lastPitch >= 0.0f && (! p.glideLegato || anyHeld);
@@ -449,6 +586,9 @@ void SynthEngine::handleMidi (const juce::MidiMessage& m, const VoiceParams& p)
     if (m.isNoteOn()) noteOn (m.getNoteNumber(), m.getFloatVelocity(), p);
     else if (m.isNoteOff()) noteOff (m.getNoteNumber(), p);
     else if (m.isPitchWheel()) bend = juce::jlimit (-1.0f, 1.0f, (float) (m.getPitchWheelValue() - 8192) / 8192.0f);
+    else if (m.isController() && m.getControllerNumber() == 1) modWheel = (float) m.getControllerValue() / 127.0f;
+    else if (m.isChannelPressure()) aftertouch = (float) m.getChannelPressureValue() / 127.0f;
+    else if (m.isAftertouch()) aftertouch = (float) m.getAfterTouchValue() / 127.0f;
     else if (m.isSustainPedalOn()) setSustain (true);
     else if (m.isSustainPedalOff()) setSustain (false);
     else if (m.isAllSoundOff()) allSoundOff();

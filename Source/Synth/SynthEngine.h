@@ -3,6 +3,7 @@
 #include "Oscillator.h"
 #include "NoiseGen.h"
 #include "VoiceFilter.h"
+#include "../Modulation/ModEngine.h"
 
 namespace idgs
 {
@@ -25,6 +26,7 @@ struct VoiceParams
     float velSens = 0.7f;
     int maxVoices = 16;
     Envelope::Settings env;
+    const ModBlock* mod = nullptr;   // modulations du bloc (nul = aucune)
 };
 
 /** Une voix : Osc A + Osc B + Sub + Noise -> 2 filtres (série / parallèle) -> enveloppe 1 (volume). */
@@ -37,7 +39,7 @@ public:
     void start (int note, float velocity, uint64_t age, const VoiceParams& p, idg::dsp::Rng& rng, float fromPitch, bool glide);
     /** Legato : la note change sans redéclencher l'enveloppe (avec ou sans glide). */
     void legatoTo (int note, const VoiceParams& p);
-    void release() { env.noteOff(); }
+    void release() { env.noteOff(); for (auto& e : modEnv) e.noteOff(); }
 
     void beginFadeOut();
     void steal (int note, float velocity, uint64_t age, float fromPitch, bool glide);
@@ -47,6 +49,10 @@ public:
     bool isFading() const { return fading; }
     bool isReleasing() const { return env.isReleasing(); }
     float getPitch() const { return curPitch; }
+    /** Valeurs modulées (0..1) des cibles pour l'affichage (-1 = non modulé). */
+    const float* modulated01() const { return mod01; }
+    /** Valeurs courantes des sources propres à la voix (enveloppes, LFO par voix, vélocité...). */
+    const float* voiceSources() const { return srcVal; }
 
     void render (float* L, float* R, int n, const VoiceParams& p, idg::dsp::Rng& rng);
 
@@ -64,6 +70,7 @@ public:
 
 private:
     void control (const VoiceParams& p);
+    void computeModulation (const VoiceParams& p);
 
     double sr = 44100.0;
     Envelope env;
@@ -88,6 +95,14 @@ private:
     float smoothCoef = 0.01f;
     bool oscActive[NumOscs] { true, true };
     bool subActive = false, noiseActive = false;
+
+    // modulation
+    VoiceParams local;                       // réglages modulés de cette voix (recalculés à cadence de contrôle)
+    Envelope modEnv[NumEnvelopes];           // ENV 2 à 8 (l'index 0 n'est pas utilisé : ENV 1 = env)
+    float lfoPh[NumLfos] {}, lfoSm[NumLfos] {};
+    float noteRand = 0.0f, ageSec = 0.0f;
+    float srcVal[NumModSrc] {};
+    float mod01[NumModFields] {};
 };
 
 /** Gestion de la polyphonie, des modes de jeu et du MIDI. */
@@ -104,7 +119,12 @@ public:
     void allSoundOff();
 
     float getBend() const { return bend; }
+    float getModWheel() const { return modWheel; }
+    float getAftertouch() const { return aftertouch; }
+    int takeNoteOns() { const int n = noteOnCount; noteOnCount = 0; return n; }
     int getActiveVoices() const;
+    /** Voix jouée le plus récemment (affichage des modulations), ou nullptr. */
+    const Voice* newestVoice() const;
 
 private:
     void checkMode (const VoiceParams& p);
@@ -121,6 +141,8 @@ private:
     idg::dsp::Rng rng;
     uint64_t ageCounter = 0;
     float bend = 0.0f; // -1..1
+    float modWheel = 0.0f, aftertouch = 0.0f;
+    int noteOnCount = 0;
     bool sustainPedal = false;
     double sr = 44100.0;
     float lastPitch = -1.0f;

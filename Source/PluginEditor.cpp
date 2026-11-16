@@ -28,14 +28,14 @@ private:
 };
 } // namespace
 
-struct IDGemsSynthEditor::Content : public juce::Component
+struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAndDropContainer
 {
     explicit Content (IDGemsSynthProcessor& p)
         : proc (p),
           synth (p),
           macros (p),
           fx ("FX // BUS A B C", { IDG_T ("Phase 4 : bus A / B / C + Master, envois, bus → bus,"), IDG_T ("rack d'effets IDGems complet dans chaque bus, chaîne de sortie complète.") }),
-          mod ("MODULATION", { IDG_T ("Phase 3 : enveloppes (déblocage jusqu'à 8), 10 LFO au crayon,"), IDG_T ("5 random / S&H, 8 macros, assignation par glisser-déposer.") }),
+          mod (p),
           arp (IDG_T ("ARPÉ // SÉQUENCEUR"), { IDG_T ("Phase 6 : arpégiateur, séquenceur 32 pas, gammes, mutation,"), IDG_T ("export MIDI en glisser-déposer, Note Spray.") }),
           exp ("EXPORT", { IDG_T ("Phase 8 : enregistreur, rolling recorder, boucle Feed,"), IDG_T ("export WAV en glisser-déposer, batch render, Draft / HQ.") }),
           masterVol (p, idgs::P::masterVol, "Volume"),
@@ -143,6 +143,8 @@ struct IDGemsSynthEditor::Content : public juce::Component
         if (flashText.isNotEmpty() && juce::Time::getMillisecondCounter() - flashTime > 2500) { flashText.clear(); repaint (flashArea); }
     }
 
+    void dragOperationEnded (const juce::DragAndDropTarget::SourceDetails&) override { proc.uiDragSource = -1; }
+
     void refreshPresetName() { presetName.setButtonText (proc.presets->currentName()); }
 
     void resized() override
@@ -184,7 +186,8 @@ struct IDGemsSynthEditor::Content : public juce::Component
     juce::OwnedArray<juce::TextButton> tabs;
     SynthPage synth;
     MacroColumn macros;
-    ComingSoonPage fx, mod, arp, exp;
+    ComingSoonPage fx, arp, exp;
+    ModListPage mod;
     std::vector<juce::Component*> pages;
     juce::TextButton panicBtn;
     Knob masterVol, ceiling;

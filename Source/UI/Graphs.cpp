@@ -187,6 +187,26 @@ void FilterView::paint (juce::Graphics& g)
     glowPath (g, curve, col, on ? 0.6f + dr : 0.4f);
     g.restoreState();
 
+    // coupure modulée (voix la plus récente) : ligne pointillée qui bouge
+    {
+        const int f = proc.modTargets.fieldForParam (proc.paramIndex (filtId (index, "cutoff")));
+        const float m = f >= 0 ? proc.modShared.fieldValue01[f].load() : -1.0f;
+        if (m >= 0.0f && cutoff.p != nullptr)
+        {
+            const float x = xOf (cutoff.p->convertFrom0to1 (m));
+            g.setColour (Theme::text.withAlpha (0.6f));
+            const float dashes[] { 3.0f, 3.0f };
+            g.drawDashedLine (juce::Line<float> (x, r.getY(), x, r.getBottom()), dashes, 2, 1.2f);
+        }
+    }
+    if (modHover)
+    {
+        g.setColour (Theme::blue.withAlpha (0.18f));
+        g.fillRect (r);
+        g.setFont (Theme::mono (11.0f, true));
+        g.setColour (Theme::blue);
+        g.drawText (IDG_T ("DÉPOSER : MODULER LA COUPURE"), r, juce::Justification::centred);
+    }
     // point de contrôle
     node (g, nodePos(), on ? Theme::accent : Theme::textDim, hoverNode || dragging);
     g.setFont (Theme::mono (9.0f, true));
@@ -199,6 +219,15 @@ void FilterView::paint (juce::Graphics& g)
         g.setColour (Theme::textDim.withAlpha (0.8f));
         g.drawText (IDG_T ("BYPASS"), r.reduced (4.0f, 2.0f), juce::Justification::topLeft);
     }
+}
+
+void FilterView::itemDropped (const SourceDetails& d)
+{
+    modHover = false;
+    const int src = d.description.toString().fromFirstOccurrenceOf ("mod:", false, false).getIntValue();
+    const int prm = proc.paramIndex (filtId (index, "cutoff"));
+    if (src >= 0 && src < NumModSrc && prm >= 0) proc.modShared.addConnection (src, prm, 0.25f, sourceIsBipolar (src));
+    repaint();
 }
 
 void FilterView::mouseDown (const juce::MouseEvent& e)

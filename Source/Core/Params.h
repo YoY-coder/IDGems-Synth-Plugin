@@ -44,6 +44,18 @@ inline juce::String envId (int e, const char* key) { return "env" + juce::String
 /** Identifiant d'une macro : macroId (0) -> "macro1". */
 inline juce::String macroId (int m) { return "macro" + juce::String (m + 1); }
 
+inline juce::String lfoId (int i, const char* key) { return "lfo" + juce::String (i + 1) + "_" + key; }
+inline juce::String rndId (int i, const char* key) { return "rnd" + juce::String (i + 1) + "_" + key; }
+
+constexpr int NumLfos = 10;
+constexpr int NumRandMods = 5;
+enum LfoMode { LfoFree, LfoNoteVoice, LfoNoteGlobal, LfoOneShot, LfoHost, NumLfoModes };
+enum RndStyle { RndPerlin, RndSampleHold, RndSmooth, RndLorenz };
+
+/** Divisions rythmiques (reprises d'IDGems). */
+const juce::StringArray& divisionNames();
+double divisionBeats (int index);
+
 constexpr int NumEnvelopes = 8;   // ENV 1 = volume ; ENV 2-4 visibles ; 5-8 se débloquent (phase 3)
 constexpr int VisibleEnvelopes = 4;
 constexpr int NumMacros = 8;

@@ -47,6 +47,8 @@ IDGemsSynthProcessor::IDGemsSynthProcessor()
     opts.osxLibrarySubFolder = "Application Support";
     appProps.setStorageParameters (opts);
 
+    modTargets.init (*this);
+    modGlobal.init (apvts, modShared, modTargets);
     presets = std::make_unique<PresetManager> (*this);
     startTimer (500);
 }
@@ -63,6 +65,7 @@ void IDGemsSynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 {
     sr = sampleRate;
     engine.prepare (sr);
+    modGlobal.prepare (sr);
     output.prepare (sr);
     work.setSize (2, juce::jmax (1, samplesPerBlock), false, true, false);
     masterGain.reset (sr, 0.02);
@@ -175,6 +178,24 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     readParams (vp);
     const float bendRange = std::round (raw.bendRange->load());
 
+    // transport de l'hôte (synchro des LFO / random)
+    double bpm = 120.0;
+    bool playing = false;
+    if (auto* ph = getPlayHead())
+        if (auto pos = ph->getPosition())
+        {
+            if (auto b = pos->getBpm()) bpm = *b;
+            playing = pos->getIsPlaying();
+            if (auto q = pos->getPpqPosition(); q && playing) ppqNow = *q;
+        }
+    if (! playing) ppqNow += (double) n / sr * bpm / 60.0;
+    uiBpm.store (bpm);
+
+    // modulations : sources globales + connexions, pour tout le bloc
+    modGlobal.process (*modBlock, n, bpm, ppqNow, playing, engine.takeNoteOns(), engine.getModWheel(), engine.getAftertouch(),
+                       0.5f + 0.5f * engine.getBend());
+    vp.mod = modBlock->numSlots > 0 ? modBlock.get() : nullptr;
+
     if (panicFlag.exchange (false))
     {
         engine.allSoundOff();
@@ -283,6 +304,17 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     for (; it != midi.cend(); ++it) engine.handleMidi ((*it).getMessage(), vp);
 
     activeVoices.store (engine.getActiveVoices(), std::memory_order_relaxed);
+    // affichage des modulations : voix la plus récente
+    if (const auto* v = engine.newestVoice())
+    {
+        const float* m = v->modulated01();
+        for (int f = 0; f < NumModFields; ++f) modShared.fieldValue01[f].store (vp.mod != nullptr ? m[f] : -1.0f, std::memory_order_relaxed);
+        const float* sv = v->voiceSources();
+        for (int s = 0; s < NumModSrc; ++s)
+            if (sourceIsPerVoice (s) && ! (s >= MSrcLfo0 && s < MSrcRnd0 && modBlock->lfo[s - MSrcLfo0].mode != LfoNoteVoice && modBlock->lfo[s - MSrcLfo0].mode != LfoOneShot))
+                modShared.sourceValue[s].store (sv[s], std::memory_order_relaxed);
+    }
+    else for (int f = 0; f < NumModFields; ++f) modShared.fieldValue01[f].store (-1.0f, std::memory_order_relaxed);
     const double secs = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0);
     const float load = (float) (secs * sr / (double) n);
     cpuLoad.store (cpuLoad.load (std::memory_order_relaxed) * 0.9f + load * 0.1f, std::memory_order_relaxed);
@@ -357,6 +389,11 @@ juce::String IDGemsSynthProcessor::dropFiles (int osc, const juce::Array<juce::F
     return msg;
 }
 
+void IDGemsSynthProcessor::setTableFromCycles (int osc, const std::vector<float>& cycles, const juce::String& name)
+{
+    setTable (osc, Wavetable::fromFrames (name, cycles));
+}
+
 void IDGemsSynthProcessor::randomTable (int osc)
 {
     const auto seed = (uint32_t) juce::Random::getSystemRandom().nextInt();
@@ -409,6 +446,29 @@ juce::ValueTree IDGemsSynthProcessor::captureState()
     }
     state.removeChild (state.getChildWithName ("Assets"), nullptr);
     state.appendChild (extra, nullptr);
+
+    // modulations : connexions (par identifiants) + formes de LFO
+    juce::ValueTree mod ("Modulation");
+    for (auto& slot : modShared.slots)
+    {
+        const int src = slot.src.load();
+        if (src < 0) continue;
+        juce::ValueTree c ("CONN");
+        c.setProperty ("src", sourceKey (src), nullptr);
+        c.setProperty ("dst", modTargets.paramId (slot.param.load()), nullptr);
+        c.setProperty ("depth", slot.depth.load(), nullptr);
+        c.setProperty ("bipolar", slot.bipolar.load(), nullptr);
+        mod.appendChild (c, nullptr);
+    }
+    for (int i = 0; i < NumLfos; ++i)
+    {
+        juce::ValueTree l ("LFOSHAPE");
+        l.setProperty ("index", i, nullptr);
+        l.setProperty ("pts", modShared.shapes[i].toString(), nullptr);
+        mod.appendChild (l, nullptr);
+    }
+    state.removeChild (state.getChildWithName ("Modulation"), nullptr);
+    state.appendChild (mod, nullptr);
     return state;
 }
 
@@ -418,6 +478,25 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
     auto copy = tree.createCopy();
     auto extra = copy.getChildWithName ("Assets");
     copy.removeChild (extra, nullptr);
+    auto mod = copy.getChildWithName ("Modulation");
+    copy.removeChild (mod, nullptr);
+    modShared.clearAll();
+    for (int i = 0; i < NumLfos; ++i) modShared.setShape (i, idg::LfoShape::preset (0));
+    for (auto c : mod)
+    {
+        if (c.hasType ("CONN"))
+        {
+            const int src = sourceFromKey (c.getProperty ("src").toString());
+            const int dst = modTargets.paramIndexForId (c.getProperty ("dst").toString());
+            if (src >= 0 && modTargets.isModulatable (dst))
+                modShared.addConnection (src, dst, (float) c.getProperty ("depth", 0.3f), (bool) c.getProperty ("bipolar", false));
+        }
+        else if (c.hasType ("LFOSHAPE"))
+        {
+            const int i = c.getProperty ("index", -1);
+            if (i >= 0 && i < NumLfos) modShared.setShape (i, idg::LfoShape::fromString (c.getProperty ("pts").toString()));
+        }
+    }
 
     // les paramètres absents (presets d'une version plus ancienne) reprennent leur valeur par défaut
     for (auto* p : getParameters())
@@ -466,6 +545,8 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
 
 void IDGemsSynthProcessor::resetToInit()
 {
+    modShared.clearAll();
+    for (int i = 0; i < NumLfos; ++i) modShared.setShape (i, idg::LfoShape::preset (0));
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             rp->setValueNotifyingHost (rp->getDefaultValue());

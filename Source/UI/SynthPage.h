@@ -1,5 +1,5 @@
 #pragma once
-#include "Graphs.h"
+#include "ModUI.h"
 
 namespace idgs::ui
 {
@@ -46,6 +46,7 @@ public:
     void filesDropped (const juce::StringArray& files, int, int) override;
 
 private:
+    juce::TextButton pencil { "CRAYON" };
     void loadFiles (const juce::Array<juce::File>& files);
     void updateVisibility();
 
@@ -124,7 +125,7 @@ private:
 };
 
 /** Enveloppes avec un onglet chacune (ENV 1 = volume ; ENV 5 à 8 se débloquent en phase 3). */
-class EnvSection : public juce::Component
+class EnvSection : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     explicit EnvSection (IDGemsSynthProcessor& p);
@@ -145,8 +146,11 @@ private:
     };
     juce::Rectangle<int> tabArea() const { return getLocalBounds().reduced (1).removeFromLeft (72); }
     juce::Rectangle<int> tabRect (int i) const;
+    void updateVisibleCount();
+    IDGemsSynthProcessor& proc;
     juce::OwnedArray<Tab> tabs;
-    int selected = 0;
+    juce::OwnedArray<ModSourceHandle> handles;
+    int selected = 0, visibleCount = VisibleEnvelopes;
 };
 
 /** Zones réservées aux modules de la phase 3 (dessinées dans la DA, sans commandes). */
@@ -186,7 +190,8 @@ private:
     SubNoiseRow subNoise;
     FilterPanel f1, f2;
     EnvSection envs;
-    FuturePanel lfo, sources;
+    LfoPanel lfo;
+    SourcesPanel sources;
     VoicePanel voice;
 };
 
@@ -200,5 +205,6 @@ public:
 
 private:
     juce::OwnedArray<Knob> knobs;
+    juce::OwnedArray<ModSourceHandle> handles;
 };
 } // namespace idgs::ui

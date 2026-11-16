@@ -43,11 +43,18 @@ protected:
 
 /** Filtre façon Vital : courbe de réponse en fréquence, point à glisser (X = coupure, Y = résonance),
     molette = drive, double-clic = valeurs par défaut. */
-class FilterView : public LiveGraph
+class FilterView : public LiveGraph, public juce::DragAndDropTarget
 {
 public:
     FilterView (IDGemsSynthProcessor& p, int index);
     void paint (juce::Graphics&) override;
+    void tick() override
+    {
+        LiveGraph::tick();
+        const int f = proc.modTargets.fieldForParam (proc.paramIndex (filtId (index, "cutoff")));
+        const float m = f >= 0 ? proc.modShared.fieldValue01[f].load() : -1.0f;
+        if (std::abs (m - lastMod) > 0.002f) { lastMod = m; repaint(); }
+    }
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
@@ -55,6 +62,11 @@ public:
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     void mouseMove (const juce::MouseEvent& e) override { const bool h = nodePos().getDistanceFrom (e.position) < 14.0f; if (h != hoverNode) { hoverNode = h; repaint(); } }
     void mouseExit (const juce::MouseEvent&) override { hoverNode = false; repaint(); }
+
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.toString().startsWith ("mod:"); }
+    void itemDragEnter (const SourceDetails&) override { modHover = true; repaint(); }
+    void itemDragExit (const SourceDetails&) override { modHover = false; repaint(); }
+    void itemDropped (const SourceDetails&) override;
 
     /** Gain (linéaire) de la réponse du filtre à la fréquence f, pour l'affichage. */
     static float magnitude (int type, float cutoff, float reso, float freq);
@@ -67,7 +79,8 @@ private:
     juce::Point<float> nodePos() const;
     int index;
     ParamDrag cutoff, reso, drive;
-    bool dragging = false, hoverNode = false;
+    bool dragging = false, hoverNode = false, modHover = false;
+    float lastMod = -2.0f;
 };
 
 /** Enveloppe éditable : points à glisser (temps, sustain) + poignées de courbe au milieu des segments. */

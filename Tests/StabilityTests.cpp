@@ -675,6 +675,108 @@ int main (int argc, char** argv)
         check (ratio < 0.5, "CPU trop eleve pour un patch courant : " + juce::String (ratio * 100.0, 1) + " %");
     }
 
+    // ===================================================================== PHASE 3
+    // 21. Modulation : connexions, effet sur le son, sauvegarde
+    {
+        std::cout << "21. Modulation (macros, LFO, enveloppes, sauvegarde)..." << std::endl;
+        auto rmsOf = [] (Harness& h, size_t from)
+        {
+            double e = 0.0;
+            for (size_t i = from; i < h.outL.size(); ++i) e += (double) h.outL[i] * h.outL[i];
+            return (float) std::sqrt (e / (double) juce::jmax ((size_t) 1, h.outL.size() - from));
+        };
+        {
+            // macro 1 -> niveau de l'Osc A : macro à 0 + profondeur -1 = silence, macro à 1 = son
+            Harness h;
+            const int lvl = h.proc.paramIndex ("osca_level");
+            check (h.proc.modTargets.isModulatable (lvl), "le niveau de l'Osc A devrait etre modulable");
+            h.proc.modShared.addConnection (MSrcMacro0, lvl, -1.0f);
+            h.set ("macro1", 1.0f);
+            h.noteOn (60);
+            h.run (0.3);
+            const size_t from = h.outL.size() - 4096;
+            check (rmsOf (h, from) < 0.01f, "macro -> niveau : la modulation n'a pas d'effet");
+            h.set ("macro1", 0.0f);
+            const size_t from2 = h.outL.size();
+            h.run (0.3);
+            check (rmsOf (h, from2 + 8192) > 0.02f, "macro -> niveau : pas de son a macro 0");
+        }
+        {
+            // LFO par voix -> coupure : le son varie dans le temps, pas de NaN
+            Harness h;
+            h.set ("osca_table", 1); h.set ("osca_pos", 1.0f);
+            h.set ("f1_on", 1.0f); h.set ("f1_cutoff", 400.0f);
+            h.set ("lfo1_sync", 0.0f); h.set ("lfo1_rate", 4.0f);
+            h.proc.modShared.addConnection (MSrcLfo0, h.proc.paramIndex ("f1_cutoff"), 0.6f);
+            h.proc.modShared.addConnection (MSrcLfo0, h.proc.paramIndex ("osca_level"), -0.7f);
+            for (int n : { 48, 55, 60 }) h.noteOn (n);
+            h.run (1.0);
+            check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h), "LFO -> coupure : NaN ou plafond");
+            float mn = 1.0f, mx = 0.0f;
+            for (int b = 0; b < 8; ++b)
+            {
+                double e = 0.0;
+                const size_t s0 = (size_t) (b * 4800 + 4800);
+                for (size_t i = s0; i < s0 + 4800 && i < h.outL.size(); ++i) e += (double) h.outL[i] * h.outL[i];
+                const float r = (float) std::sqrt (e / 4800.0);
+                mn = juce::jmin (mn, r); mx = juce::jmax (mx, r);
+            }
+            check (mx > mn * 1.3f, "LFO -> niveau : le niveau ne bouge pas (" + juce::String (mn) + " / " + juce::String (mx) + ")");
+        }
+        {
+            // ENV 2 -> pitch fin + vélocité -> mix, fuzz des profondeurs : pas de NaN
+            Harness h (44100.0, 128);
+            juce::Random rnd (3);
+            for (int k = 0; k < 40; ++k)
+            {
+                const int src = rnd.nextInt (NumModSrc);
+                int prm = -1;
+                for (int tries = 0; tries < 50 && prm < 0; ++tries)
+                {
+                    const int c = rnd.nextInt (h.proc.getParameters().size());
+                    if (h.proc.modTargets.isModulatable (c)) prm = c;
+                }
+                if (prm >= 0) h.proc.modShared.addConnection (src, prm, rnd.nextFloat() * 2.0f - 1.0f, rnd.nextBool());
+            }
+            h.set ("osca_unison", 4.0f);
+            h.set ("f1_on", 1.0f); h.set ("f2_on", 1.0f);
+            for (int k = 0; k < 30; ++k)
+            {
+                h.noteOn (36 + rnd.nextInt (48), rnd.nextFloat());
+                h.midi.addEvent (juce::MidiMessage::controllerEvent (1, 1, rnd.nextInt (128)), 0);
+                h.midi.addEvent (juce::MidiMessage::pitchWheel (1, rnd.nextInt (16384)), 3);
+                h.set (macroId (rnd.nextInt (8)).toRawUTF8(), rnd.nextFloat());
+                h.run (0.05);
+                if (rnd.nextBool()) h.noteOff (36 + rnd.nextInt (48));
+            }
+            check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h), "modulations au hasard : NaN ou plafond");
+            // sauvegarde : connexions et forme de LFO restaurées
+            h.proc.modShared.setShape (2, idg::LfoShape::preset (4));
+            int count = 0;
+            for (auto& sl : h.proc.modShared.slots) if (sl.src.load() >= 0) ++count;
+            juce::MemoryBlock mb;
+            h.proc.getStateInformation (mb);
+            Harness b;
+            b.proc.setStateInformation (mb.getData(), (int) mb.getSize());
+            int count2 = 0;
+            for (auto& sl : b.proc.modShared.slots) if (sl.src.load() >= 0) ++count2;
+            check (count == count2 && count > 0, "connexions non restaurees : " + juce::String (count) + " / " + juce::String (count2));
+            check (b.proc.modShared.shapes[2].pts.size() == idg::LfoShape::preset (4).pts.size(), "forme de LFO non restauree");
+        }
+        {
+            // CPU : 16 voix, 20 modulations par voix
+            Harness h (48000.0, 256);
+            for (int k = 0; k < 20; ++k)
+                h.proc.modShared.addConnection (MSrcLfo0 + (k % NumLfos), h.proc.paramIndex (k % 2 ? "f1_cutoff" : "osca_pos"), 0.1f + 0.01f * (float) k);
+            h.set ("f1_on", 1.0f);
+            for (int n = 40; n < 56; ++n) h.noteOn (n, 0.7f);
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            h.run (3.0);
+            const double ratio = (juce::Time::getMillisecondCounterHiRes() - t0) / 3000.0;
+            std::cout << "   charge avec modulations : " << juce::String (ratio * 100.0, 1) << " % du temps reel" << std::endl;
+        }
+    }
+
     std::cout << (failures == 0 ? "=== TOUS LES TESTS PASSENT ===" : "=== " + juce::String (failures).toStdString() + " ECHEC(S) ===") << std::endl;
     return failures == 0 ? 0 : 1;
 }

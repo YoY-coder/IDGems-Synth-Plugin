@@ -48,6 +48,8 @@ set(IDGS_DSP_SOURCES
     Source/Synth/SampleData.cpp
     Source/Synth/SynthEngine.cpp
     Source/State/PresetManager.cpp
+    Source/Modulation/ModSystem.cpp
+    Source/Modulation/ModEngine.cpp
     Source/PluginProcessor.cpp)
 
 set(IDGS_UI_SOURCES
@@ -57,7 +59,8 @@ set(IDGS_UI_SOURCES
     Source/UI/Widgets.cpp
     Source/UI/SynthPage.cpp
     Source/UI/PresetBrowser.cpp
-    Source/UI/Graphs.cpp)
+    Source/UI/Graphs.cpp
+    Source/UI/ModUI.cpp)
 
 # Police des titres (Michroma, licence SIL OFL : voir Resources/Fonts/OFL.txt)
 juce_add_binary_data(IDGemsSynthData SOURCES Resources/Fonts/Michroma-Regular.ttf)

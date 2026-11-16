@@ -3,6 +3,7 @@
 #include "Synth/SynthEngine.h"
 #include "Engine/OutputChain.h"
 #include "State/PresetManager.h"
+#include "Modulation/ModEngine.h"
 
 /** Processeur principal d'IDGems Synth. */
 class IDGemsSynthProcessor : public juce::AudioProcessor, private juce::Timer
@@ -48,6 +49,8 @@ public:
     juce::String dropFiles (int osc, const juce::Array<juce::File>& files);
     /** Bouton dé : nouvelle wavetable aléatoire. */
     void randomTable (int osc);
+    /** Crayon : remplace la table de l'oscillateur par ces cycles (Size échantillons par frame). */
+    void setTableFromCycles (int osc, const std::vector<float>& cycles, const juce::String& name);
     const idgs::Wavetable& displayTable (int osc) const;
     const idgs::SampleSet* currentSamples (int osc) const { return assets[osc].samples.load(); }
     juce::String assetName (int osc) const;
@@ -57,6 +60,12 @@ public:
     void panic() { panicFlag.store (true); }
 
     juce::AudioProcessorValueTreeState apvts;
+    idgs::ModShared modShared;               // connexions de modulation + formes de LFO (partagé avec l'interface)
+    idgs::ModTargets modTargets;
+    // état de l'interface de modulation (survol / glisser-déposer), lu par tous les potards
+    std::atomic<int> uiHoverSource { -1 }, uiDragSource { -1 }, uiHoverParam { -1 };
+    int paramIndex (const juce::String& id) const { return modTargets.paramIndexForId (id); }
+    double getBpm() const { return uiBpm.load(); }
     juce::MidiKeyboardState keyboardState;   // clavier à l'écran
     juce::ApplicationProperties appProps;    // réglages de l'interface (taille, auteur...)
     std::unique_ptr<idgs::PresetManager> presets;
@@ -79,6 +88,10 @@ private:
     void retire (std::shared_ptr<void> p);
 
     idgs::SynthEngine engine;
+    idgs::ModGlobal modGlobal;
+    std::unique_ptr<idgs::ModBlock> modBlock = std::make_unique<idgs::ModBlock>();
+    std::atomic<double> uiBpm { 120.0 };
+    double ppqNow = 0.0;
     idg::OutputChain output;
     idgs::VoiceParams vp;
 

@@ -3,6 +3,20 @@
 
 namespace idgs
 {
+const juce::StringArray& divisionNames()
+{
+    static const juce::StringArray d { "1/64", "1/32T", "1/32", "1/16T", "1/16", "1/16D", "1/8T", "1/8",
+                                       "1/8D", "1/4T", "1/4", "1/4D", "1/2", "1/1", "2/1", "4/1" };
+    return d;
+}
+
+double divisionBeats (int i)
+{
+    static const double b[] { 0.0625, 0.125 * 2.0 / 3.0, 0.125, 0.25 * 2.0 / 3.0, 0.25, 0.375, 0.5 * 2.0 / 3.0, 0.5,
+                              0.75, 2.0 / 3.0, 1.0, 1.5, 2.0, 4.0, 8.0, 16.0 };
+    return b[juce::jlimit (0, 15, i)];
+}
+
 const juce::StringArray& oscModeNames() { static const juce::StringArray n { "Wavetable", "Sample", "Multisample" }; return n; }
 const juce::StringArray& warpNames()
 {
@@ -92,9 +106,34 @@ juce::String helpFor (const juce::String& fullId)
     auto id = fullId.startsWith ("oscb_") ? "osca_" + fullId.substring (5) : fullId;
     id = id.startsWith ("f2_") ? "f1_" + id.substring (3) : id;
     if (id.startsWith ("env") && id.length() > 4 && id[3] != '1' && id[4] == '_') id = "env1_" + id.substring (5);
+    if (id.startsWith ("lfo"))
+    {
+        const auto k = id.fromFirstOccurrenceOf ("_", false, false);
+        static const std::map<juce::String, juce::String> lh {
+            { "rate", IDG_T ("Vitesse du LFO en Hz (mode libre, Sync éteint).") },
+            { "sync", IDG_T ("Synchro au tempo de l'hôte (la vitesse devient une division rythmique).") },
+            { "div", IDG_T ("Division rythmique quand Sync est allumé.") },
+            { "mode", IDG_T ("Libre : tourne en continu. Note (voix) : repart à chaque note, indépendant par voix. Note (global) : toutes les voix repartent à chaque note. One-shot : un seul cycle par note. Calé hôte : suit la position du morceau.") },
+            { "phase", IDG_T ("Décalage de phase.") },
+            { "fade", IDG_T ("Fondu d'entrée du LFO après chaque note.") },
+            { "smooth", IDG_T ("Lissage de la sortie (adoucit les marches et les sauts).") },
+            { "stereo", IDG_T ("Décalage de phase entre gauche et droite (appliqué aux cibles stéréo : effets des bus, phase 4).") } };
+        auto it = lh.find (k);
+        return it == lh.end() ? juce::String() : it->second;
+    }
+    if (id.startsWith ("rnd"))
+    {
+        const auto k = id.fromFirstOccurrenceOf ("_", false, false);
+        static const std::map<juce::String, juce::String> rh {
+            { "rate", IDG_T ("Vitesse des tirages.") }, { "sync", IDG_T ("Synchro au tempo.") }, { "div", IDG_T ("Division rythmique.") },
+            { "style", IDG_T ("Perlin : dérive douce. S&H : marches (sample & hold). Lisse : tirages reliés en douceur. Lorenz : chaos continu.") },
+            { "retrig", IDG_T ("Nouveau tirage à chaque note jouée.") } };
+        auto it = rh.find (k);
+        return it == rh.end() ? juce::String() : it->second;
+    }
     if (id.startsWith ("macro"))
-        return id == "macro8" ? IDG_T ("Macro Chaos : pilotera d'un seul geste l'intensité générale du désordre (phase 3 / 7).")
-                              : IDG_T ("Macro : glisser vers n'importe quel potard pour l'assigner (phase 3).");
+        return id == "macro8" ? IDG_T ("Macro Chaos : assignable comme les autres ; pilotera aussi l'intensité générale du désordre (random, phase 7).")
+                              : IDG_T ("Macro : attrape la pastille et glisse-la sur un potard ou un graphique pour l'assigner.");
     static const std::map<juce::String, juce::String> h {
         { "osca_on",      IDG_T ("Active / coupe l'oscillateur.") },
         { "osca_mode",    IDG_T ("Moteur de l'oscillateur : Wavetable, Sample (un fichier joué à la hauteur des notes) ou Multisample (plusieurs fichiers répartis sur le clavier). Granulaire et Spectral arrivent en phase 5.") },
@@ -249,7 +288,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         B.f (envId (e, "rcurve"), N + "Release Curve", -1.0f, 1.0f, -0.5f, curveText);
     }
 
-    // ---- Macros (assignation par glisser-déposer en phase 3)
+    // ---- LFO
+    for (int i = 0; i < NumLfos; ++i)
+    {
+        const juce::String N = "LFO " + juce::String (i + 1) + " ";
+        B.f (lfoId (i, "rate"), N + "Rate", 0.01f, 40.0f, 1.0f, [] (float v, int) { return juce::String (v, v < 1.0f ? 2 : 1) + " Hz"; }, 2.0f, "Hz");
+        B.b (lfoId (i, "sync"), N + "Sync", true);
+        B.c (lfoId (i, "div"), N + "Division", divisionNames(), divisionNames().indexOf ("1/4"));
+        B.c (lfoId (i, "mode"), N + "Mode", { "Libre", "Note (voix)", "Note (global)", "One-shot", IDG_T ("Calé hôte") }, LfoNoteVoice);
+        B.f (lfoId (i, "phase"), N + "Phase", 0.0f, 1.0f, 0.0f, pctText);
+        B.t (lfoId (i, "fade"), N + "Fade In", 5000.0f, 500.0f, 0.0f);
+        B.t (lfoId (i, "smooth"), N + "Smooth", 500.0f, 50.0f, 0.0f);
+        B.f (lfoId (i, "stereo"), N + IDG_T ("Stéréo"), 0.0f, 0.5f, 0.0f, pctText);
+    }
+    // ---- Random
+    for (int i = 0; i < NumRandMods; ++i)
+    {
+        const juce::String N = "Random " + juce::String (i + 1) + " ";
+        B.f (rndId (i, "rate"), N + "Rate", 0.01f, 40.0f, 2.0f, [] (float v, int) { return juce::String (v, v < 1.0f ? 2 : 1) + " Hz"; }, 2.0f, "Hz");
+        B.b (rndId (i, "sync"), N + "Sync", false);
+        B.c (rndId (i, "div"), N + "Division", divisionNames(), divisionNames().indexOf ("1/8"));
+        B.c (rndId (i, "style"), N + "Style", { "Perlin", "S&H", "Lisse", "Lorenz" }, RndPerlin);
+        B.b (rndId (i, "retrig"), N + "Retrig Note", false);
+    }
+
+    // ---- Macros (assignation par glisser-déposer)
     for (int m = 0; m < NumMacros; ++m)
         B.f (macroId (m), m == NumMacros - 1 ? juce::String ("Macro Chaos") : "Macro " + juce::String (m + 1), 0.0f, 1.0f, 0.0f, pctText);
 

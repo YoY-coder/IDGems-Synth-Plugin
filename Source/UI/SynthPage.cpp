@@ -73,7 +73,11 @@ OscRow::OscRow (IDGemsSynthProcessor& p, int o)
             if (safe != nullptr && ! fc.getResults().isEmpty()) safe->loadFiles (fc.getResults());
         });
     };
-    addAll (*this, { &on, &mode, &table, &dice, &load, &display, &oct, &semi, &fine, &level, &pan,
+    pencil.setClickingTogglesState (true);
+    pencil.setColour (juce::TextButton::buttonOnColourId, Theme::accent);
+    pencil.setTooltip (IDG_T ("Crayon : dessine directement la frame courante de la wavetable (la table devient « Personnalisée »)."));
+    pencil.onClick = [this] { display.setPencil (pencil.getToggleState()); };
+    addAll (*this, { &pencil, &on, &mode, &table, &dice, &load, &display, &oct, &semi, &fine, &level, &pan,
                      &unison, &detune, &blend, &spread, &warp1, &warp1Src, &warp2, &warp2Src, &warp1Amt, &warp2Amt,
                      &phase, &phRand, &stretch, &shift, &root, &loop });
     updateVisibility();
@@ -96,6 +100,8 @@ void OscRow::updateVisibility()
     const bool wt = m == ModeWavetable;
     table.setVisible (wt);
     dice.setVisible (wt);
+    pencil.setVisible (wt);
+    if (! wt) { pencil.setToggleState (false, juce::dontSendNotification); display.setPencil (false); }
     stretch.setVisible (wt);
     shift.setVisible (wt);
     root.setVisible (m == ModeSample);
@@ -140,6 +146,8 @@ void OscRow::resized()
     if (table.isVisible())
     {
         dice.setBounds (bar.removeFromRight (30));
+        bar.removeFromRight (3);
+        pencil.setBounds (bar.removeFromRight (62));
         bar.removeFromRight (3);
         table.setBounds (bar);
     }
@@ -340,64 +348,89 @@ void EnvSection::Tab::paintOverChildren (juce::Graphics& g)
     if (env == 0) return;
     g.setFont (Theme::mono (9.0f));
     g.setColour (Theme::blue.withAlpha (0.8f));
-    g.drawText (IDG_T ("source de modulation : assignation par glisser-déposer en phase 3"),
+    g.drawText (IDG_T ("source de modulation : attrape la pastille de l'onglet et glisse-la sur un potard"),
                 editor.getBounds().reduced (8, 4), juce::Justification::bottomLeft);
 }
 
-EnvSection::EnvSection (IDGemsSynthProcessor& p)
+EnvSection::EnvSection (IDGemsSynthProcessor& p) : proc (p)
 {
-    for (int e = 0; e < VisibleEnvelopes; ++e)
+    for (int e = 0; e < NumEnvelopes; ++e)
     {
         auto* t = tabs.add (new Tab (p, e));
         addChildComponent (t);
+        addChildComponent (handles.add (new ModSourceHandle (p, MSrcEnv0 + e)));
     }
     tabs[0]->setVisible (true);
+    updateVisibleCount();
+    setTooltip (IDG_T ("ENV 1 règle le volume des voix. Toutes les enveloppes sont des sources de modulation : attrape la pastille d'un onglet.\n"
+                       "Une nouvelle enveloppe se débloque quand toutes celles affichées sont assignées (jusqu'à 8)."));
+}
+
+void EnvSection::updateVisibleCount()
+{
+    // déblocage façon Vital : une enveloppe de plus dès que toutes les enveloppes visibles servent
+    int n = VisibleEnvelopes;
+    while (n < NumEnvelopes)
+    {
+        bool all = true;
+        for (int e = 1; e < n; ++e) if (! proc.modShared.sourceUsed (MSrcEnv0 + e)) { all = false; break; }
+        if (! all) break;
+        ++n;
+    }
+    if (n != visibleCount)
+    {
+        visibleCount = n;
+        resized();
+        repaint();
+    }
+    for (int e = 0; e < NumEnvelopes; ++e) handles[e]->setVisible (e < visibleCount);
 }
 
 juce::Rectangle<int> EnvSection::tabRect (int i) const
 {
     auto a = tabArea().reduced (0, 6);
-    const int h = a.getHeight() / (VisibleEnvelopes + 1);
+    const int rows = visibleCount < NumEnvelopes ? visibleCount + 1 : visibleCount;
+    const int h = a.getHeight() / juce::jmax (1, rows);
     return a.withTrimmedTop (h * i).withHeight (h);
 }
 
 void EnvSection::paint (juce::Graphics& g)
 {
     Theme::panelFrame (g, getLocalBounds().toFloat().reduced (1.0f), Theme::accent);
-    for (int i = 0; i <= VisibleEnvelopes; ++i)
+    const int rows = visibleCount < NumEnvelopes ? visibleCount + 1 : visibleCount;
+    for (int i = 0; i < rows; ++i)
     {
         auto r = tabRect (i).reduced (6, 2).toFloat();
         const bool sel = i == selected;
-        if (i < VisibleEnvelopes)
+        if (i < visibleCount)
         {
             g.setColour (sel ? Theme::accent.withAlpha (0.2f) : Theme::bg.withAlpha (0.4f));
             g.fillRect (r);
             if (sel) { g.setColour (Theme::accent); g.fillRect (r.withWidth (3.0f)); }
-            g.setFont (Theme::mono (11.0f, sel));
+            g.setFont (Theme::mono (10.5f, sel));
             g.setColour (sel ? Theme::text : Theme::textDim);
-            g.drawText ("ENV " + juce::String (i + 1), r, juce::Justification::centred);
+            g.drawText ("ENV " + juce::String (i + 1), r.withTrimmedLeft (6.0f), juce::Justification::centredLeft);
             if (i == 0)
             {
-                g.setFont (Theme::mono (8.0f));
+                g.setFont (Theme::mono (7.5f));
                 g.setColour (Theme::accent.withAlpha (0.8f));
-                g.drawText ("VOLUME", r.withTrimmedTop (r.getHeight() * 0.6f), juce::Justification::centred);
+                g.drawText ("VOL", r.withTrimmedLeft (6.0f).withTrimmedTop (r.getHeight() * 0.62f), juce::Justification::centredLeft);
             }
         }
         else
         {
-            // ENV 5 à 8 : se débloquent quand les 4 premières sont toutes assignées (phase 3)
             g.setColour (Theme::line);
             g.drawRect (r, 1.0f);
-            g.setFont (Theme::mono (9.0f));
+            g.setFont (Theme::mono (8.5f));
             g.setColour (Theme::textDim.withAlpha (0.7f));
-            g.drawText ("+ ENV 5-8", r, juce::Justification::centred);
+            g.drawText ("+ ENV " + juce::String (visibleCount + 1), r, juce::Justification::centred);
         }
     }
 }
 
 void EnvSection::mouseDown (const juce::MouseEvent& e)
 {
-    for (int i = 0; i < VisibleEnvelopes; ++i)
+    for (int i = 0; i < visibleCount; ++i)
         if (tabRect (i).contains (e.getPosition()))
         {
             selected = i;
@@ -411,11 +444,17 @@ void EnvSection::resized()
     auto r = getLocalBounds().reduced (8, 8);
     r.removeFromLeft (tabArea().getWidth());
     for (auto* t : tabs) t->setBounds (r);
+    for (int e = 0; e < NumEnvelopes; ++e)
+    {
+        auto t = tabRect (e).reduced (6, 2);
+        handles[e]->setBounds (t.removeFromRight (juce::jmin (18, t.getHeight())).reduced (1));
+    }
 }
 
 void EnvSection::tick()
 {
     tabs[selected]->editor.tick();
+    updateVisibleCount();
 }
 
 // =============================================================================
@@ -516,13 +555,7 @@ void VoicePanel::resized()
 // SynthPage
 // =============================================================================
 SynthPage::SynthPage (IDGemsSynthProcessor& p)
-    : oscA (p, 0), oscB (p, 1), subNoise (p), f1 (p, 0), f2 (p, 1), envs (p),
-      lfo ("LFO", { "LFO 1", "LFO 2", "LFO 3", "LFO 4", "..." }, {},
-           IDG_T ("Phase 3 : 10 LFO dessinables au crayon, stéréo, synchro, retrigger, multi-cibles.")),
-      sources (IDG_T ("Random / jeu"), {}, { "RANDOM 1", "RANDOM 2", "RANDOM 3", "RANDOM 4", "RANDOM 5",
-                                              "NOTE", IDG_T ("VÉLOCITÉ"), "MOLETTE", "AFTERTOUCH", "PITCH BEND" },
-               IDG_T ("Phase 3 : random / S&H et sources de jeu, à glisser sur les potards.")),
-      voice (p)
+    : oscA (p, 0), oscB (p, 1), subNoise (p), f1 (p, 0), f2 (p, 1), envs (p), lfo (p), sources (p), voice (p)
 {
     addAll (*this, { &oscA, &oscB, &subNoise, &f1, &f2, &envs, &lfo, &sources, &voice });
 }
@@ -535,6 +568,7 @@ void SynthPage::tick()
     f1.tick();
     f2.tick();
     envs.tick();
+    lfo.tick();
 }
 
 void SynthPage::resized()
@@ -576,6 +610,7 @@ MacroColumn::MacroColumn (IDGemsSynthProcessor& p)
         const bool chaos = m == NumMacros - 1;
         auto* k = knobs.add (new Knob (p, macroId (m), chaos ? "Chaos" : "Macro " + juce::String (m + 1), chaos ? Theme::red : Theme::accent));
         addAndMakeVisible (k);
+        addAndMakeVisible (handles.add (new ModSourceHandle (p, MSrcMacro0 + m)));
     }
 }
 
@@ -592,6 +627,11 @@ void MacroColumn::resized()
 {
     auto r = getLocalBounds().reduced (6, 8);
     const int h = r.getHeight() / NumMacros;
-    for (auto* k : knobs) k->setBounds (r.removeFromTop (h).reduced (4, 6));
+    for (int m = 0; m < knobs.size(); ++m)
+    {
+        auto cell = r.removeFromTop (h);
+        handles[m]->setBounds (cell.getRight() - 16, cell.getY() + 2, 16, 16);
+        knobs[m]->setBounds (cell.reduced (6, 6));
+    }
 }
 } // namespace idgs::ui

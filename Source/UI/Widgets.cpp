@@ -14,9 +14,11 @@ constexpr float endAngle = juce::MathConstants<float>::pi * 2.75f;
 // Knob
 // =============================================================================
 Knob::Knob (IDGemsSynthProcessor& p, const juce::String& paramId, const juce::String& l, juce::Colour c)
-    : label (l), colour (c)
+    : proc (p), label (l), colour (c)
 {
     param = p.apvts.getParameter (paramId);
+    paramIdx = p.paramIndex (paramId);
+    field = p.modTargets.fieldForParam (paramIdx);
     setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     setRotaryParameters (startAngle, endAngle, true);
@@ -25,8 +27,129 @@ Knob::Knob (IDGemsSynthProcessor& p, const juce::String& paramId, const juce::St
     att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (p.apvts, paramId, *this);
     if (param != nullptr)
         setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
-    const auto help = idgs::helpFor (paramId);
-    setTooltip (label + (help.isNotEmpty() ? "\n" + help : juce::String()) + IDG_T ("\nDouble-clic : valeur par défaut"));
+    if (field >= 0) startTimerHz (20);
+}
+
+juce::String Knob::getTooltip()
+{
+    const auto help = param != nullptr ? idgs::helpFor (param->getParameterID()) : juce::String();
+    juce::String t = label + (help.isNotEmpty() ? "\n" + help : juce::String()) + IDG_T ("\nDouble-clic : valeur par défaut");
+    if (field >= 0)
+    {
+        juce::String mods;
+        for (auto& sl : proc.modShared.slots)
+            if (sl.src.load() >= 0 && sl.param.load() == paramIdx)
+                mods << "\n  " << sourceName (sl.src.load()) << " : " << juce::String (juce::roundToInt (sl.depth.load() * 100.0f)) << " %"
+                     << (sl.bipolar.load() ? IDG_T (" (bipolaire)") : juce::String());
+        t << (mods.isNotEmpty() ? IDG_T ("\nModulations :") + mods : juce::String())
+          << IDG_T ("\nModulable : glisse une source ici. Alt / Ctrl + glisser = profondeur. Clic droit = modulations.");
+    }
+    return t;
+}
+
+void Knob::tick()
+{
+    const float m = field >= 0 ? proc.modShared.fieldValue01[field].load() : -1.0f;
+    const int ver = proc.modShared.version.load(), hs = proc.uiHoverSource.load(), ds = proc.uiDragSource.load();
+    if (std::abs (m - lastMod) > 0.002f || ver != lastVersion || hs != lastHoverSrc || ds != lastDragSrc)
+    {
+        lastMod = m; lastVersion = ver; lastHoverSrc = hs; lastDragSrc = ds;
+        repaint();
+    }
+}
+
+void Knob::mouseEnter (const juce::MouseEvent& e)
+{
+    hovering = true;
+    proc.uiHoverParam = paramIdx;
+    juce::Slider::mouseEnter (e);
+    repaint();
+}
+
+void Knob::mouseExit (const juce::MouseEvent& e)
+{
+    hovering = false;
+    if (proc.uiHoverParam.load() == paramIdx) proc.uiHoverParam = -1;
+    juce::Slider::mouseExit (e);
+    repaint();
+}
+
+void Knob::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu()) { showModMenu(); return; }
+    depthSlot = -1;
+    if (field >= 0 && (e.mods.isAltDown() || e.mods.isCtrlDown() || e.mods.isCommandDown()))
+    {
+        // profondeur de la dernière modulation de ce potard
+        for (int i = MaxModSlots - 1; i >= 0; --i)
+            if (proc.modShared.slots[i].src.load() >= 0 && proc.modShared.slots[i].param.load() == paramIdx) { depthSlot = i; break; }
+        if (depthSlot >= 0) { depthStart = proc.modShared.slots[depthSlot].depth.load(); return; }
+    }
+    juce::Slider::mouseDown (e);
+}
+
+void Knob::mouseDrag (const juce::MouseEvent& e)
+{
+    if (depthSlot >= 0)
+    {
+        const float d = juce::jlimit (-1.0f, 1.0f, depthStart - (float) e.getDistanceFromDragStartY() / 150.0f);
+        proc.modShared.slots[depthSlot].depth = d;
+        ++proc.modShared.version;
+        repaint();
+        return;
+    }
+    juce::Slider::mouseDrag (e);
+}
+
+void Knob::mouseUp (const juce::MouseEvent& e)
+{
+    if (depthSlot >= 0) { depthSlot = -1; return; }
+    juce::Slider::mouseUp (e);
+}
+
+bool Knob::isInterestedInDragSource (const SourceDetails& d)
+{
+    return field >= 0 && d.description.toString().startsWith ("mod:");
+}
+
+void Knob::itemDropped (const SourceDetails& d)
+{
+    dropHover = false;
+    const int src = d.description.toString().fromFirstOccurrenceOf ("mod:", false, false).getIntValue();
+    if (src >= 0 && src < NumModSrc) proc.modShared.addConnection (src, paramIdx, 0.25f, sourceIsBipolar (src));
+    repaint();
+}
+
+void Knob::showModMenu()
+{
+    if (field < 0) return;
+    juce::PopupMenu m;
+    m.addSectionHeader (IDG_T ("Modulations de « ") + label + IDG_T (" »"));
+    int count = 0;
+    for (int i = 0; i < MaxModSlots; ++i)
+    {
+        auto& sl = proc.modShared.slots[i];
+        if (sl.src.load() < 0 || sl.param.load() != paramIdx) continue;
+        ++count;
+        juce::PopupMenu sub;
+        sub.addItem (1000 + i, "Inverser");
+        sub.addItem (2000 + i, "Bipolaire", true, sl.bipolar.load());
+        sub.addItem (3000 + i, "Supprimer");
+        m.addSubMenu (sourceName (sl.src.load()) + "  " + juce::String (juce::roundToInt (sl.depth.load() * 100.0f)) + " %", sub);
+    }
+    if (count == 0) m.addItem (-1, IDG_T ("Aucune : glisse une source (macro, LFO, enveloppe...) sur ce potard"), false);
+    else { m.addSeparator(); m.addItem (9999, IDG_T ("Supprimer toutes les modulations")); }
+    juce::Component::SafePointer<Knob> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe] (int r)
+    {
+        if (safe == nullptr || r <= 0) return;
+        auto& ms = safe->proc.modShared;
+        if (r == 9999) { for (int i = 0; i < MaxModSlots; ++i) if (ms.slots[i].param.load() == safe->paramIdx) ms.removeConnection (i); }
+        else if (r >= 3000) ms.removeConnection (r - 3000);
+        else if (r >= 2000) { ms.slots[r - 2000].bipolar = ! ms.slots[r - 2000].bipolar.load(); ++ms.version; }
+        else if (r >= 1000) { ms.slots[r - 1000].depth = -ms.slots[r - 1000].depth.load(); ++ms.version; }
+        safe->repaint();
+    });
 }
 
 void Knob::paint (juce::Graphics& g)
@@ -78,6 +201,40 @@ void Knob::paint (juce::Graphics& g)
             g.fillEllipse (juce::Rectangle<float> (gs, gs).withCentre (tip));
             g.setColour (juce::Colours::white.withAlpha ((0.6f + 0.4f * bloom) * alpha));
             g.fillEllipse (juce::Rectangle<float> (3.0f, 3.0f).withCentre (tip));
+        }
+    }
+
+    // ---- modulations : anneaux intérieurs colorés (couleur de la source), point = valeur modulée
+    if (field >= 0)
+    {
+        float innerR = ringR - 5.0f;
+        const int hs = proc.uiHoverSource.load(), ds = proc.uiDragSource.load();
+        bool hot = false;
+        for (auto& sl : proc.modShared.slots)
+        {
+            const int src = sl.src.load();
+            if (src < 0 || sl.param.load() != paramIdx) continue;
+            const float depth = sl.depth.load();
+            const auto c = sourceColour (src).withAlpha ((hs < 0 || hs == src ? 0.95f : 0.35f) * alpha);
+            if (hs == src) hot = true;
+            if (sl.bipolar.load()) arc (innerR, angleOf (norm - std::abs (depth)), angleOf (norm + std::abs (depth)), c, 2.2f);
+            else arc (innerR, angleOf (norm), angleOf (norm + depth), c, 2.2f);
+            innerR -= 3.0f;
+            if (innerR < radius * 0.45f) break;
+        }
+        const float mod = proc.modShared.fieldValue01[field].load();
+        if (mod >= 0.0f && std::abs (mod - norm) > 0.002f)
+        {
+            const float a = angleOf (mod) - juce::MathConstants<float>::halfPi;
+            g.setColour (Theme::text.withAlpha (alpha));
+            g.fillEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre ({ centre.x + std::cos (a) * ringR, centre.y + std::sin (a) * ringR }));
+        }
+        // prévisualisation : source survolée -> ses cibles s'allument ; glisser en cours -> cibles possibles
+        if (hot || dropHover || ds >= 0)
+        {
+            const auto c = ds >= 0 ? sourceColour (ds) : sourceColour (hs);
+            g.setColour (c.withAlpha (dropHover ? 0.45f : (hot ? 0.3f : 0.12f)));
+            g.drawEllipse (dial.expanded (1.5f), dropHover ? 3.0f : 2.0f);
         }
     }
 
@@ -199,6 +356,118 @@ void OscDisplay::tick()
     }
 }
 
+void OscDisplay::setPos (float v)
+{
+    if (auto* p = proc.apvts.getParameter (oscId (osc, "pos"))) p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, v));
+}
+
+void OscDisplay::mouseDown (const juce::MouseEvent& e)
+{
+    const int mode = (int) proc.getValue (oscId (osc, "mode"));
+    if (pencil && mode == ModeWavetable)
+    {
+        // copie de la frame courante dans le tampon d'édition
+        const auto& wt = proc.displayTable (osc);
+        editFrame = juce::roundToInt (proc.getValue (oscId (osc, "pos")) * (float) (wt.getNumFrames() - 1));
+        editBuf.assign (wt.table (editFrame, 0), wt.table (editFrame, 0) + Wavetable::Size);
+        lastDraw = e.position;
+        drawTo (e.position);
+        return;
+    }
+    if (auto* p = proc.apvts.getParameter (oscId (osc, "pos"))) { p->beginChangeGesture(); dragStartPos = p->getValue(); }
+    if (mode != ModeWavetable) setPos (e.position.x / (float) juce::jmax (1, getWidth()));
+}
+
+void OscDisplay::drawTo (juce::Point<float> pt)
+{
+    if (editBuf.empty()) return;
+    auto r = getLocalBounds().toFloat().reduced (8.0f, 14.0f);
+    auto idxOf = [&] (float x) { return juce::jlimit (0, Wavetable::Size - 1, (int) ((x - r.getX()) / r.getWidth() * (float) Wavetable::Size)); };
+    auto valOf = [&] (float y) { return juce::jlimit (-1.0f, 1.0f, (r.getCentreY() - y) / (r.getHeight() * 0.45f)); };
+    int i0 = idxOf (lastDraw.x), i1 = idxOf (pt.x);
+    float v0 = valOf (lastDraw.y), v1 = valOf (pt.y);
+    if (i0 > i1) { std::swap (i0, i1); std::swap (v0, v1); }
+    for (int i = i0; i <= i1; ++i)
+        editBuf[(size_t) i] = i1 == i0 ? v1 : v0 + (v1 - v0) * (float) (i - i0) / (float) (i1 - i0);
+    lastDraw = pt;
+    repaint();
+}
+
+void OscDisplay::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! editBuf.empty()) { drawTo (e.position); return; }
+    if ((int) proc.getValue (oscId (osc, "mode")) == ModeWavetable)
+    {
+        // vers le haut = frames suivantes ; Maj = réglage fin
+        const float sens = e.mods.isShiftDown() ? 600.0f : 150.0f;
+        setPos (dragStartPos - (float) e.getDistanceFromDragStartY() / sens);
+    }
+    else setPos (e.position.x / (float) juce::jmax (1, getWidth()));
+}
+
+void OscDisplay::mouseUp (const juce::MouseEvent&)
+{
+    if (! editBuf.empty())
+    {
+        // la table modifiée remplace la table de l'oscillateur (devient « Personnalisée »)
+        const auto& wt = proc.displayTable (osc);
+        std::vector<float> cycles;
+        for (int f = 0; f < wt.getNumFrames(); ++f)
+        {
+            if (f == editFrame) cycles.insert (cycles.end(), editBuf.begin(), editBuf.end());
+            else cycles.insert (cycles.end(), wt.table (f, 0), wt.table (f, 0) + Wavetable::Size);
+        }
+        const auto name = wt.getName().endsWith ("*") ? wt.getName() : wt.getName() + " *";
+        proc.setTableFromCycles (osc, cycles, name);
+        editBuf.clear();
+        repaint();
+        return;
+    }
+    if (auto* p = proc.apvts.getParameter (oscId (osc, "pos"))) p->endChangeGesture();
+}
+
+void OscDisplay::itemDropped (const SourceDetails& d)
+{
+    modHover = false;
+    const int src = d.description.toString().fromFirstOccurrenceOf ("mod:", false, false).getIntValue();
+    const int prm = proc.paramIndex (oscId (osc, "pos"));
+    if (src >= 0 && src < NumModSrc && prm >= 0) proc.modShared.addConnection (src, prm, 0.25f, sourceIsBipolar (src));
+    setMessage (IDG_T ("Modulation : ") + sourceName (src) + IDG_T (" -> position"));
+}
+
+void OscDisplay::paintPencil (juce::Graphics& g, juce::Rectangle<float> full)
+{
+    auto r = getLocalBounds().toFloat().reduced (8.0f, 14.0f);
+    const auto& wt = proc.displayTable (osc);
+    const int frame = editBuf.empty() ? juce::roundToInt (juce::jmax (0.0f, lastPos) * (float) (wt.getNumFrames() - 1)) : editFrame;
+    const float* data = editBuf.empty() ? wt.table (frame, 0) : editBuf.data();
+    g.setColour (Theme::line.withAlpha (0.6f));
+    g.drawHorizontalLine ((int) r.getCentreY(), r.getX(), r.getRight());
+    for (int k = 1; k < 8; ++k) g.drawVerticalLine ((int) (r.getX() + r.getWidth() * (float) k / 8.0f), r.getY(), r.getBottom());
+    juce::Path p;
+    const int pts = juce::jmax (64, (int) r.getWidth());
+    for (int i = 0; i <= pts; ++i)
+    {
+        const int idx = juce::jlimit (0, Wavetable::Size - 1, i * Wavetable::Size / pts);
+        const float x = r.getX() + r.getWidth() * (float) i / (float) pts;
+        const float y = r.getCentreY() - data[idx] * r.getHeight() * 0.45f;
+        if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+    }
+    g.setColour (Theme::accent.withAlpha (0.3f));
+    g.strokePath (p, juce::PathStrokeType (5.0f));
+    g.setColour (Theme::accent.brighter (0.3f));
+    g.strokePath (p, juce::PathStrokeType (1.8f));
+    g.setFont (Theme::mono (9.5f));
+    g.setColour (Theme::textDim);
+    g.drawText (IDG_T ("CRAYON  //  FRAME ") + juce::String (frame + 1) + " / " + juce::String (wt.getNumFrames()) + IDG_T ("  //  dessine la forme"),
+                full.reduced (6.0f, 3.0f), juce::Justification::topRight);
+}
+
+void OscDisplay::mouseDoubleClick (const juce::MouseEvent&)
+{
+    if (auto* p = proc.apvts.getParameter (oscId (osc, "pos"))) { p->beginChangeGesture(); p->setValueNotifyingHost (p->getDefaultValue()); p->endChangeGesture(); }
+}
+
 void OscDisplay::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (2.0f);
@@ -206,8 +475,17 @@ void OscDisplay::paint (juce::Graphics& g)
     g.fillRect (r);
     lastMode = (int) proc.getValue (oscId (osc, "mode"));
     lastPos = proc.getValue (oscId (osc, "pos"));
-    if (lastMode == ModeWavetable) paintTable (g, r);
+    if (lastMode == ModeWavetable) { if (pencil) paintPencil (g, r); else paintTable (g, r); }
     else paintSample (g, r);
+    if (modHover)
+    {
+        g.setColour (Theme::blue.withAlpha (0.2f));
+        g.fillRect (r);
+        g.setColour (Theme::blue);
+        g.drawRect (r, 2.0f);
+        g.setFont (Theme::mono (12.0f, true));
+        g.drawText (IDG_T ("DÉPOSER : MODULER LA POSITION"), r, juce::Justification::centred);
+    }
 
     g.setFont (Theme::mono (10.0f, true));
     g.setColour (Theme::textDim);
