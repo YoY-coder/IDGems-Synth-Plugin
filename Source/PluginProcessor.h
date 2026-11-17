@@ -4,6 +4,8 @@
 #include "Engine/OutputChain.h"
 #include "State/PresetManager.h"
 #include "Modulation/ModEngine.h"
+#include "Fx/Rack.h"
+#include "Fx/Sequencer.h"
 
 /** Processeur principal d'IDGems Synth. */
 class IDGemsSynthProcessor : public juce::AudioProcessor, private juce::Timer
@@ -70,6 +72,22 @@ public:
     juce::ApplicationProperties appProps;    // réglages de l'interface (taille, auteur...)
     std::unique_ptr<idgs::PresetManager> presets;
 
+    // ---- Bus d'effets (A, B, C, Master) : racks repris d'IDGems
+    struct BusRack
+    {
+        idg::ParamBank bank;
+        idg::Rack rack;
+        idg::RackShared shared;
+        idg::SeqData seq[idg::NumFx];
+        idg::SeqRuntime seqRt[idg::NumFx];
+    };
+    BusRack& rack (int r) { return *racks[(size_t) r]; }
+    /** Valeur modulée (0..1) d'un paramètre pour l'affichage, ou -1. */
+    float modDisplay01 (int paramIndex) const;
+    std::atomic<float> busMeter[idgs::NumBuses] {}, followerValue[idgs::NumBuses] {};
+    std::atomic<bool> busEdgeBlocked[idgs::NumBuses][idgs::NumBuses] {}; // envoi bus -> bus coupé (boucle évitée)
+    std::atomic<bool> busEdgeActive[idgs::NumBuses][idgs::NumBuses] {};
+
     // télémétrie pour l'interface
     std::atomic<float> meterOut[2] { 0.0f, 0.0f };
     std::atomic<float> meterGR { 1.0f };
@@ -77,6 +95,7 @@ public:
     std::atomic<float> cpuLoad { 0.0f };     // part du temps réel utilisée (0..1)
 
     static constexpr int ScopeSize = 2048;
+    static constexpr int ChunkSize = 32;     // traitement par tranches de 32 échantillons (séquenceurs, effets)
     juce::AbstractFifo scopeFifo { ScopeSize };
     std::vector<float> scopeData = std::vector<float> (ScopeSize, 0.0f);
 
@@ -88,6 +107,19 @@ private:
     void retire (std::shared_ptr<void> p);
 
     idgs::SynthEngine engine;
+    std::array<std::unique_ptr<BusRack>, idg::NumRacks> racks;
+    idg::Scale scale;
+    idg::dsp::Rng audioRng;
+    juce::AudioBuffer<float> busBuf;          // 3 bus stéréo (entrées) + master stéréo
+    juce::AudioBuffer<float> busOut;          // sorties des bus (pour les envois bus -> bus)
+    idg::dsp::LatencyDelay masterDry;
+    std::vector<float> dryL, dryR;
+    float busVolSm[idgs::NumBuses] { 1, 1, 1 }, busPanL[idgs::NumBuses] { 1, 1, 1 }, busPanR[idgs::NumBuses] { 1, 1, 1 };
+    float follow[idgs::NumBuses] {};
+    float masterMixSm = 1.0f;
+    int lastLatency = -1;
+    void applyGlobalModulation();
+    void computeBusOrder (int order[idgs::NumBuses], bool edgeOk[idgs::NumBuses][idgs::NumBuses]);
     idgs::ModGlobal modGlobal;
     std::unique_ptr<idgs::ModBlock> modBlock = std::make_unique<idgs::ModBlock>();
     std::atomic<double> uiBpm { 120.0 };
@@ -127,6 +159,11 @@ private:
         std::atomic<float>* subOn, *subShape, *subOct, *subLevel, *subPan, *subRoute, *noiseOn, *noiseType, *noiseLevel,
             *noisePan, *noiseTone, *noiseRoute, *serial, *delay, *attack, *hold, *decay, *sustain, *release, *aCurve, *dCurve,
             *rCurve, *voices, *voiceMode, *glide, *glideCurve, *glideLegato, *velSens, *bendRange, *masterVol, *ceiling;
+        std::atomic<float>* send[idgs::NumSendSources][idgs::NumBuses];
+        std::atomic<float>* busVol[idgs::NumBuses], *busPan[idgs::NumBuses], *busMute[idgs::NumBuses], *busSolo[idgs::NumBuses];
+        std::atomic<float>* busSend[idgs::NumBuses][idgs::NumBuses];
+        std::atomic<float>* masterMix, *inGain, *outGain, *hpFreq, *monoOn, *monoFreq, *ottDepth, *ottTime, *ottUp, *ottDown, *ottGain,
+            *clipDrive, *limRelease, *zeroLat, *destOS, *chaosMacro;
     } raw {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IDGemsSynthProcessor)

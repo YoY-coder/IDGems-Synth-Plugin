@@ -56,6 +56,22 @@ enum RndStyle { RndPerlin, RndSampleHold, RndSmooth, RndLorenz };
 const juce::StringArray& divisionNames();
 double divisionBeats (int index);
 
+constexpr int NumBuses = 3;          // A, B, C (+ Master)
+constexpr int NumSendSources = 4;    // Osc A, Osc B, Sub, Noise
+/** Envoi d'une source vers un bus : sendId (0, 1) -> "send_osca_b". */
+inline juce::String sendId (int src, int bus)
+{
+    static const char* s[] { "osca", "oscb", "sub", "noise" };
+    return juce::String ("send_") + s[src] + "_" + juce::String::charToString ((juce::juce_wchar) ('a' + bus));
+}
+/** Paramètre d'un bus : busId (1, "vol") -> "bus_b_vol". */
+inline juce::String busId (int bus, const char* key) { return juce::String ("bus_") + juce::String::charToString ((juce::juce_wchar) ('a' + bus)) + "_" + key; }
+/** Envoi d'un bus vers un autre : busSendId (0, 2) -> "bus_a_to_c". */
+inline juce::String busSendId (int from, int to)
+{
+    return juce::String ("bus_") + juce::String::charToString ((juce::juce_wchar) ('a' + from)) + "_to_" + juce::String::charToString ((juce::juce_wchar) ('a' + to));
+}
+
 constexpr int NumEnvelopes = 8;   // ENV 1 = volume ; ENV 2-4 visibles ; 5-8 se débloquent (phase 3)
 constexpr int VisibleEnvelopes = 4;
 constexpr int NumMacros = 8;
@@ -116,6 +132,21 @@ namespace P
     // Sortie
     static const char* const masterVol  = "master_vol";
     static const char* const ceiling    = "lim_ceiling";
+    static const char* const masterMix  = "master_drywet";
+    static const char* const inGain     = "in_gain";
+    static const char* const outGain    = "out_gain";
+    static const char* const limRelease = "lim_release";
+    static const char* const hpFreq     = "hp_freq";
+    static const char* const monoOn     = "mono_on";
+    static const char* const monoFreq   = "mono_freq";
+    static const char* const ottDepth   = "ott_depth";
+    static const char* const ottTime    = "ott_time";
+    static const char* const ottUp      = "ott_up";
+    static const char* const ottDown    = "ott_down";
+    static const char* const ottGain    = "ott_gain";
+    static const char* const clipDrive  = "clip_drive";
+    static const char* const zeroLat    = "zero_latency";
+    static const char* const destOS     = "dest_os";
 }
 
 /** Textes d'aide (bulles au survol). */

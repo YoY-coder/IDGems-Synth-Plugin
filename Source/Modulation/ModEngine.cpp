@@ -26,7 +26,8 @@ void ModGlobal::reset()
     rng.seed (0xC0FFEEu);
 }
 
-void ModGlobal::process (ModBlock& b, int n, double bpm, double ppq, bool playing, int noteOns, float modWheel, float aftertouch, float bend01)
+void ModGlobal::process (ModBlock& b, int n, double bpm, double ppq, bool playing, int noteOns, float modWheel, float aftertouch,
+                         float bend01, const float* followers)
 {
     juce::ignoreUnused (playing);
     const double dt = (double) n / sr;
@@ -34,6 +35,7 @@ void ModGlobal::process (ModBlock& b, int n, double bpm, double ppq, bool playin
 
     // ---- connexions actives (copie compacte, lue une seule fois)
     b.numSlots = 0;
+    b.numGlobal = 0;
     b.targets = targets;
     for (auto& u : b.srcUsed) u = false;
     for (auto& u : b.fieldUsed) u = false;
@@ -43,7 +45,17 @@ void ModGlobal::process (ModBlock& b, int n, double bpm, double ppq, bool playin
         if (src < 0 || src >= NumModSrc) continue;
         const int param = slot.param.load (std::memory_order_relaxed);
         const int field = targets->fieldForParam (param);
-        if (field < 0) continue;
+        if (field < 0)
+        {
+            const auto gt = targets->globalTarget (param);
+            if (gt.first < 0) continue;
+            auto& g = b.gslots[b.numGlobal++];
+            g.src = src; g.rack = gt.first; g.index = gt.second;
+            g.depth = slot.depth.load (std::memory_order_relaxed);
+            g.bipolar = slot.bipolar.load (std::memory_order_relaxed);
+            b.srcUsed[src] = true;
+            continue;
+        }
         auto& a = b.slots[b.numSlots++];
         a.src = src; a.field = field; a.param = param;
         a.depth = slot.depth.load (std::memory_order_relaxed);
@@ -83,6 +95,10 @@ void ModGlobal::process (ModBlock& b, int n, double bpm, double ppq, bool playin
         const float a = L.smoothMs <= 0.01f ? 0.0f : (float) std::exp (-dt / (L.smoothMs * 0.001));
         lfoSmooth[i] = v + (lfoSmooth[i] - v) * a;
         b.global[MSrcLfo0 + i] = lfoSmooth[i];
+        // canal droit décalé (LFO stéréo, appliqué aux effets des bus)
+        double phR = ph + (double) r.stereo->load();
+        phR -= std::floor (phR);
+        b.globalR[MSrcLfo0 + i] = L.table[juce::jlimit (0, idg::LfoShape::tableSize - 1, (int) (phR * idg::LfoShape::tableSize))];
         shared->lfoPhase[i].store ((float) ph, std::memory_order_relaxed);
     }
 
@@ -125,6 +141,8 @@ void ModGlobal::process (ModBlock& b, int n, double bpm, double ppq, bool playin
     b.global[MSrcModWheel] = modWheel;
     b.global[MSrcAftertouch] = aftertouch;
     b.global[MSrcPitchBend] = bend01;
+    for (int f = 0; f < NumBuses; ++f) b.global[MSrcFollow0 + f] = followers != nullptr ? followers[f] : 0.0f;
+    for (int s = 0; s < NumModSrc; ++s) if (! (s >= MSrcLfo0 && s < MSrcRnd0)) b.globalR[s] = b.global[s];
 
     // ---- enveloppes (réglages pour les voix)
     for (int e = 0; e < NumEnvelopes; ++e)

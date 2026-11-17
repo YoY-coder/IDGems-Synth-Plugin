@@ -1,5 +1,6 @@
 #include "Params.h"
 #include "../Synth/Wavetable.h"
+#include "../Fx/ParamDefs.h"
 
 namespace idgs
 {
@@ -198,10 +199,29 @@ juce::String helpFor (const juce::String& fullId)
         { P::velSens,     IDG_T ("Influence de la vélocité sur le volume (0 % = toutes les notes au même niveau).") },
         { P::bendRange,   IDG_T ("Amplitude du pitch bend en demi-tons.") },
         { P::masterVol,   IDG_T ("Volume général, avant le limiteur.") },
+        { P::masterMix,   IDG_T ("Dry/wet du rack Master : dose l'ensemble des effets du Master.") },
+        { P::inGain,      IDG_T ("Gain d'entrée de la chaîne de sortie.") },
+        { P::outGain,     IDG_T ("Gain de sortie, avant le soft clip et le limiteur.") },
+        { P::hpFreq,      IDG_T ("Passe-haut de sortie (anti-sub, anti-DC).") },
+        { P::monoOn,      IDG_T ("Grave en mono sous la fréquence choisie.") },
+        { P::monoFreq,    IDG_T ("Fréquence sous laquelle le grave passe en mono.") },
+        { P::ottDepth,    IDG_T ("OTT : compression multibande haute et basse (3 bandes).") },
+        { P::ottTime,     IDG_T ("OTT : vitesse (attaque / release).") },
+        { P::ottUp,       IDG_T ("OTT : compression vers le haut (remonte les détails).") },
+        { P::ottDown,     IDG_T ("OTT : compression vers le bas.") },
+        { P::ottGain,     IDG_T ("OTT : gain de sortie.") },
+        { P::clipDrive,   IDG_T ("Soft clip : saturation douce avant le limiteur.") },
+        { P::limRelease,  IDG_T ("Release du limiteur.") },
+        { P::zeroLat,     IDG_T ("Sans latence : coupe les effets qui ajoutent de la latence (pitch shift, formant, pixel sort...). Conseillé pour jouer en direct.") },
+        { P::destOS,      IDG_T ("Suréchantillonnage de la famille Destruction (moins d'aliasing, plus de CPU).") },
         { P::ceiling,     IDG_T ("Plafond du limiteur de sortie (aucun échantillon ne dépasse cette valeur).") },
     };
     auto it = h.find (id);
-    return it == h.end() ? juce::String() : it->second;
+    if (it != h.end()) return it->second;
+    if (id.startsWith ("send_")) return IDG_T ("Niveau d'envoi de cette source vers ce bus d'effets.");
+    if (id.contains ("_to_")) return IDG_T ("Envoi de ce bus vers un autre bus (les boucles sont automatiquement évitées).");
+    if (id.startsWith ("bus_")) return IDG_T ("Réglage du bus d'effets.");
+    return {};
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
@@ -324,6 +344,43 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     B.b (P::glideLegato, "Glide Legato Only", false);
     B.f (P::velSens, "Velocity Sens", 0.0f, 1.0f, 0.7f, pctText);
     B.i (P::bendRange, "Bend Range", 0, 24, 2);
+
+    // ---- Envois des sources vers les bus (par défaut : tout dans le bus A)
+    static const char* srcNames[] { "Osc A", "Osc B", "Sub", "Noise" };
+    for (int src = 0; src < NumSendSources; ++src)
+        for (int b = 0; b < NumBuses; ++b)
+            B.f (sendId (src, b), juce::String (srcNames[src]) + " -> Bus " + juce::String::charToString ((juce::juce_wchar) ('A' + b)),
+                 0.0f, 1.0f, b == 0 ? 1.0f : 0.0f, pctText);
+    // ---- Bus A / B / C
+    for (int b = 0; b < NumBuses; ++b)
+    {
+        const juce::String N = "Bus " + juce::String::charToString ((juce::juce_wchar) ('A' + b)) + " ";
+        B.f (busId (b, "vol"), N + "Volume", -60.0f, 6.0f, 0.0f, [] (float v, int) { return v <= -59.9f ? juce::String ("-inf") : juce::String (v, 1) + " dB"; }, -1.0f, "dB");
+        B.f (busId (b, "pan"), N + "Pan", -1.0f, 1.0f, 0.0f, panText);
+        B.b (busId (b, "mute"), N + "Mute", false);
+        B.b (busId (b, "solo"), N + "Solo", false);
+        for (int t = 0; t < NumBuses; ++t)
+            if (t != b) B.f (busSendId (b, t), N + "-> Bus " + juce::String::charToString ((juce::juce_wchar) ('A' + t)), 0.0f, 1.0f, 0.0f, pctText);
+    }
+    // ---- Racks d'effets (Bus A, B, C, Master) : repris d'IDGems
+    idg::addRackParameters (l);
+
+    // ---- Master et chaîne de sortie
+    B.f (P::masterMix, "Master Dry/Wet", 0.0f, 1.0f, 1.0f, pctText);
+    B.f (P::inGain, "Input Gain", -24.0f, 24.0f, 0.0f, [] (float v, int) { return juce::String (v, 1) + " dB"; }, -1.0f, "dB");
+    B.f (P::outGain, "Output Gain", -24.0f, 24.0f, 0.0f, [] (float v, int) { return juce::String (v, 1) + " dB"; }, -1.0f, "dB");
+    B.f (P::hpFreq, "High-pass", 5.0f, 300.0f, 5.0f, hzText, 40.0f, "Hz");
+    B.b (P::monoOn, "Bass Mono", false);
+    B.f (P::monoFreq, "Bass Mono Freq", 40.0f, 400.0f, 120.0f, hzText, 120.0f, "Hz");
+    B.f (P::ottDepth, "OTT Depth", 0.0f, 1.0f, 0.0f, pctText);
+    B.f (P::ottTime, "OTT Time", 0.1f, 10.0f, 1.0f, [] (float v, int) { return "x" + juce::String (v, 2); }, 1.0f);
+    B.f (P::ottUp, "OTT Upward", 0.0f, 1.0f, 1.0f, pctText);
+    B.f (P::ottDown, "OTT Downward", 0.0f, 1.0f, 1.0f, pctText);
+    B.f (P::ottGain, "OTT Gain", -12.0f, 12.0f, 0.0f, [] (float v, int) { return juce::String (v, 1) + " dB"; }, -1.0f, "dB");
+    B.f (P::clipDrive, "Soft Clip Drive", 0.0f, 24.0f, 0.0f, [] (float v, int) { return juce::String (v, 1) + " dB"; }, -1.0f, "dB");
+    B.f (P::limRelease, "Limiter Release", 10.0f, 500.0f, 80.0f, msText, 80.0f, "ms");
+    B.b (P::zeroLat, "Zero Latency", true);
+    B.c (P::destOS, "Destruction Oversampling", { "1x", "2x", "4x" }, 1);
 
     // ---- Sortie
     B.f (P::masterVol, "Master Volume", -60.0f, 6.0f, -6.0f,

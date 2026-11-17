@@ -18,7 +18,7 @@ Knob::Knob (IDGemsSynthProcessor& p, const juce::String& paramId, const juce::St
 {
     param = p.apvts.getParameter (paramId);
     paramIdx = p.paramIndex (paramId);
-    field = p.modTargets.fieldForParam (paramIdx);
+    field = p.modTargets.isModulatable (paramIdx) ? 1 : -1; // >= 0 : cible de modulation (voix ou effet)
     setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     setRotaryParameters (startAngle, endAngle, true);
@@ -32,7 +32,14 @@ Knob::Knob (IDGemsSynthProcessor& p, const juce::String& paramId, const juce::St
 
 juce::String Knob::getTooltip()
 {
-    const auto help = param != nullptr ? idgs::helpFor (param->getParameterID()) : juce::String();
+    auto help = param != nullptr ? idgs::helpFor (param->getParameterID()) : juce::String();
+    if (help.isEmpty() && param != nullptr)
+        for (int k = 0; k < idg::NumRacks && help.isEmpty(); ++k)
+        {
+            const auto& reg = idg::rackRegistry (k);
+            const int i = reg.find (param->getParameterID());
+            if (i >= 0) help = reg.all[(size_t) i].help;
+        }
     juce::String t = label + (help.isNotEmpty() ? "\n" + help : juce::String()) + IDG_T ("\nDouble-clic : valeur par défaut");
     if (field >= 0)
     {
@@ -49,7 +56,7 @@ juce::String Knob::getTooltip()
 
 void Knob::tick()
 {
-    const float m = field >= 0 ? proc.modShared.fieldValue01[field].load() : -1.0f;
+    const float m = field >= 0 ? proc.modDisplay01 (paramIdx) : -1.0f;
     const int ver = proc.modShared.version.load(), hs = proc.uiHoverSource.load(), ds = proc.uiDragSource.load();
     if (std::abs (m - lastMod) > 0.002f || ver != lastVersion || hs != lastHoverSrc || ds != lastDragSrc)
     {
@@ -222,7 +229,7 @@ void Knob::paint (juce::Graphics& g)
             innerR -= 3.0f;
             if (innerR < radius * 0.45f) break;
         }
-        const float mod = proc.modShared.fieldValue01[field].load();
+        const float mod = proc.modDisplay01 (paramIdx);
         if (mod >= 0.0f && std::abs (mod - norm) > 0.002f)
         {
             const float a = angleOf (mod) - juce::MathConstants<float>::halfPi;

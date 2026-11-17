@@ -9,7 +9,7 @@ namespace idgs
 class VoiceFilter
 {
 public:
-    static constexpr int CombSize = 8192;
+    static constexpr int CombSize = 4096;
 
     void prepare (double sampleRate)
     {

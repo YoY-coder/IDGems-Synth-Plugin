@@ -25,6 +25,8 @@ struct VoiceParams
     float bendSemis = 0.0f;
     float velSens = 0.7f;
     int maxVoices = 16;
+    float send[NumSendSources][NumBuses] { { 1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 } };
+    bool busActive[NumBuses] { true, false, false };
     Envelope::Settings env;
     const ModBlock* mod = nullptr;   // modulations du bloc (nul = aucune)
 };
@@ -54,7 +56,8 @@ public:
     /** Valeurs courantes des sources propres à la voix (enveloppes, LFO par voix, vélocité...). */
     const float* voiceSources() const { return srcVal; }
 
-    void render (float* L, float* R, int n, const VoiceParams& p, idg::dsp::Rng& rng);
+    /** Rendu additionné dans les buffers des bus (busL[b], busR[b]). */
+    void render (float* const* busL, float* const* busR, int n, const VoiceParams& p, idg::dsp::Rng& rng);
 
     // état de jeu (lu par le moteur)
     int note = -1;
@@ -76,7 +79,7 @@ private:
     Envelope env;
     OscUnit osc[NumOscs];
     NoiseGen noise;
-    VoiceFilter filt[2];
+    VoiceFilter filt[NumBuses][2];   // un jeu de filtres par bus utilisé (les sources partagées vers plusieurs bus restent justes)
     float velocity = 1.0f;
     bool fading = false;
     float fade = 1.0f, fadeStep = 0.0f;
@@ -113,7 +116,7 @@ public:
     void reset();
 
     void handleMidi (const juce::MidiMessage& m, const VoiceParams& p);
-    void render (float* L, float* R, int n, const VoiceParams& p);
+    void render (float* const* busL, float* const* busR, int n, const VoiceParams& p);
 
     /** Toutes les voix s'éteignent en quelques millisecondes (Panic). */
     void allSoundOff();

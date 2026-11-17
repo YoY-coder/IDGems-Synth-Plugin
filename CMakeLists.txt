@@ -50,6 +50,11 @@ set(IDGS_DSP_SOURCES
     Source/State/PresetManager.cpp
     Source/Modulation/ModSystem.cpp
     Source/Modulation/ModEngine.cpp
+    Source/Fx/ParamDefs.cpp
+    Source/Fx/ParamBank.cpp
+    Source/Fx/Rack.cpp
+    Source/Fx/EffectFactory.cpp
+    Source/Fx/Sequencer.cpp
     Source/PluginProcessor.cpp)
 
 set(IDGS_UI_SOURCES

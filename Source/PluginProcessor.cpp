@@ -39,6 +39,28 @@ IDGemsSynthProcessor::IDGemsSynthProcessor()
     raw.rCurve = r (P::env1RCurve); raw.voices = r (P::voices); raw.voiceMode = r (P::voiceMode); raw.glide = r (P::glide);
     raw.glideCurve = r (P::glideCurve); raw.glideLegato = r (P::glideLegato); raw.velSens = r (P::velSens);
     raw.bendRange = r (P::bendRange); raw.masterVol = r (P::masterVol); raw.ceiling = r (P::ceiling);
+    for (int src = 0; src < NumSendSources; ++src)
+        for (int b = 0; b < NumBuses; ++b) raw.send[src][b] = r (sendId (src, b));
+    for (int b = 0; b < NumBuses; ++b)
+    {
+        raw.busVol[b] = r (busId (b, "vol")); raw.busPan[b] = r (busId (b, "pan"));
+        raw.busMute[b] = r (busId (b, "mute")); raw.busSolo[b] = r (busId (b, "solo"));
+        for (int t = 0; t < NumBuses; ++t) raw.busSend[b][t] = t == b ? nullptr : r (busSendId (b, t));
+    }
+    raw.masterMix = r (P::masterMix); raw.inGain = r (P::inGain); raw.outGain = r (P::outGain); raw.hpFreq = r (P::hpFreq);
+    raw.monoOn = r (P::monoOn); raw.monoFreq = r (P::monoFreq); raw.ottDepth = r (P::ottDepth); raw.ottTime = r (P::ottTime);
+    raw.ottUp = r (P::ottUp); raw.ottDown = r (P::ottDown); raw.ottGain = r (P::ottGain); raw.clipDrive = r (P::clipDrive);
+    raw.limRelease = r (P::limRelease); raw.zeroLat = r (P::zeroLat); raw.destOS = r (P::destOS);
+    raw.chaosMacro = r (macroId (NumMacros - 1));
+
+    // racks d'effets (Bus A, B, C, Master)
+    for (int k = 0; k < idg::NumRacks; ++k)
+    {
+        racks[(size_t) k] = std::make_unique<BusRack>();
+        auto& br = *racks[(size_t) k];
+        br.bank.init (apvts, idg::rackRegistry (k));
+        br.rack.init (br.bank, br.shared);
+    }
 
     juce::PropertiesFile::Options opts;
     opts.applicationName = "IDGemsSynth";
@@ -48,6 +70,14 @@ IDGemsSynthProcessor::IDGemsSynthProcessor()
     appProps.setStorageParameters (opts);
 
     modTargets.init (*this);
+    // les paramètres des effets sont des cibles de modulation globales
+    for (int k = 0; k < idg::NumRacks; ++k)
+    {
+        const auto& reg = idg::rackRegistry (k);
+        for (int i = 0; i < (int) reg.all.size(); ++i)
+            if (reg.all[(size_t) i].type == idg::PType::Float)
+                modTargets.setGlobalTarget (modTargets.paramIndexForId (reg.all[(size_t) i].id), k, i);
+    }
     modGlobal.init (apvts, modShared, modTargets);
     presets = std::make_unique<PresetManager> (*this);
     startTimer (500);
@@ -67,10 +97,22 @@ void IDGemsSynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     engine.prepare (sr);
     modGlobal.prepare (sr);
     output.prepare (sr);
-    work.setSize (2, juce::jmax (1, samplesPerBlock), false, true, false);
+    work.setSize (2, juce::jmax (ChunkSize, samplesPerBlock), false, true, false);
+    busBuf.setSize (2 * NumBuses, ChunkSize, false, true, false);
+    busOut.setSize (2 * NumBuses, ChunkSize, false, true, false);
+    for (auto& br : racks)
+    {
+        br->rack.prepare (sr, ChunkSize);
+        br->rack.reset();
+        for (auto& rt : br->seqRt) rt.reset();
+    }
+    masterDry.prepare (idg::Rack::rackLatency (false) + 8);
+    dryL.assign ((size_t) ChunkSize, 0.0f);
+    dryR.assign ((size_t) ChunkSize, 0.0f);
+    for (auto& f : follow) f = 0.0f;
+    lastLatency = -1;
     masterGain.reset (sr, 0.02);
     masterGain.setCurrentAndTargetValue (idg::dsp::dbToGain (raw.masterVol->load()));
-    setLatencySamples (output.latency (false));
     panicMute = 0;
     panicGain = 1.0f;
 }
@@ -164,6 +206,89 @@ void IDGemsSynthProcessor::readParams (VoiceParams& p) const
 // =============================================================================
 // Rendu
 // =============================================================================
+float IDGemsSynthProcessor::modDisplay01 (int paramIndex) const
+{
+    const int f = modTargets.fieldForParam (paramIndex);
+    if (f >= 0) return modShared.fieldValue01[f].load();
+    const auto gt = modTargets.globalTarget (paramIndex);
+    if (gt.first < 0) return -1.0f;
+    const auto& p = racks[(size_t) gt.first]->bank[gt.second];
+    return p.modActive ? p.display01.load() : -1.0f;
+}
+
+void IDGemsSynthProcessor::applyGlobalModulation()
+{
+    // modulations des effets : sources globales (LFO stéréo : canal droit décalé) ou valeur de la voix la plus récente
+    for (auto& br : racks) br->bank.clearMod();
+    const auto& mb = *modBlock;
+    const auto* newest = engine.newestVoice();
+    for (int i = 0; i < mb.numGlobal; ++i)
+    {
+        const auto& g = mb.gslots[i];
+        auto& p = racks[(size_t) g.rack]->bank[g.index];
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            float v;
+            if (sourceIsPerVoice (g.src) && ! (g.src >= MSrcLfo0 && g.src < MSrcRnd0
+                                               && mb.lfo[g.src - MSrcLfo0].mode != LfoNoteVoice && mb.lfo[g.src - MSrcLfo0].mode != LfoOneShot))
+                v = newest != nullptr ? newest->voiceSources()[g.src] : 0.0f;
+            else v = ch == 0 ? mb.global[g.src] : mb.globalR[g.src];
+            if (g.bipolar) v = v * 2.0f - 1.0f;
+            p.modAcc[ch] += g.depth * v;
+        }
+        p.modActive = true;
+    }
+    for (auto& br : racks) br->bank.update (scale, 0.0f, 0.0, br->rack.activeFlags());
+}
+
+void IDGemsSynthProcessor::computeBusOrder (int order[NumBuses], bool edgeOk[NumBuses][NumBuses])
+{
+    // envois bus -> bus : un envoi « arrière » (vers un bus précédent) n'est gardé que s'il ne crée pas de boucle
+    bool edge[NumBuses][NumBuses] {};
+    for (int a = 0; a < NumBuses; ++a)
+        for (int t = 0; t < NumBuses; ++t)
+            edge[a][t] = t != a && raw.busSend[a][t]->load() > 0.0005f;
+    for (int a = 0; a < NumBuses; ++a)
+        for (int t = 0; t < NumBuses; ++t) edgeOk[a][t] = edge[a][t] && t > a;
+    auto reaches = [&edgeOk] (int from, int to)
+    {
+        bool seen[NumBuses] {};
+        int stack[NumBuses * 4], sp = 0;
+        stack[sp++] = from;
+        while (sp > 0)
+        {
+            const int x = stack[--sp];
+            if (x == to) return true;
+            if (seen[x]) continue;
+            seen[x] = true;
+            for (int y = 0; y < NumBuses; ++y) if (edgeOk[x][y] && sp < NumBuses * 4) stack[sp++] = y;
+        }
+        return false;
+    };
+    for (int a = NumBuses - 1; a >= 0; --a)
+        for (int t = 0; t < a; ++t)
+            if (edge[a][t] && ! reaches (t, a)) edgeOk[a][t] = true;
+    for (int a = 0; a < NumBuses; ++a)
+        for (int t = 0; t < NumBuses; ++t)
+        {
+            busEdgeActive[a][t].store (edgeOk[a][t], std::memory_order_relaxed);
+            busEdgeBlocked[a][t].store (edge[a][t] && ! edgeOk[a][t], std::memory_order_relaxed);
+        }
+    // ordre topologique (Kahn)
+    int indeg[NumBuses] {};
+    for (int a = 0; a < NumBuses; ++a) for (int t = 0; t < NumBuses; ++t) if (edgeOk[a][t]) ++indeg[t];
+    bool done[NumBuses] {};
+    for (int k = 0; k < NumBuses; ++k)
+    {
+        int pick = -1;
+        for (int x = 0; x < NumBuses && pick < 0; ++x) if (! done[x] && indeg[x] == 0) pick = x;
+        if (pick < 0) for (int x = 0; x < NumBuses && pick < 0; ++x) if (! done[x]) pick = x;
+        done[pick] = true;
+        order[k] = pick;
+        for (int t = 0; t < NumBuses; ++t) if (edgeOk[pick][t]) --indeg[t];
+    }
+}
+
 void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -172,13 +297,11 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     buffer.clear();
     if (n <= 0) return;
 
-    // le clavier à l'écran injecte ses notes dans le flux MIDI
     keyboardState.processNextMidiBuffer (midi, 0, n, true);
-
     readParams (vp);
     const float bendRange = std::round (raw.bendRange->load());
 
-    // transport de l'hôte (synchro des LFO / random)
+    // transport de l'hôte
     double bpm = 120.0;
     bool playing = false;
     if (auto* ph = getPlayHead())
@@ -188,13 +311,25 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             playing = pos->getIsPlaying();
             if (auto q = pos->getPpqPosition(); q && playing) ppqNow = *q;
         }
-    if (! playing) ppqNow += (double) n / sr * bpm / 60.0;
     uiBpm.store (bpm);
+    const double beatsPerSample = bpm / 60.0 / sr;
 
-    // modulations : sources globales + connexions, pour tout le bloc
+    // envois vers les bus
+    for (int src = 0; src < NumSendSources; ++src)
+        for (int b = 0; b < NumBuses; ++b) vp.send[src][b] = raw.send[src][b]->load();
+    for (int b = 0; b < NumBuses; ++b)
+    {
+        vp.busActive[b] = false;
+        for (int src = 0; src < NumSendSources; ++src) vp.busActive[b] |= vp.send[src][b] > 0.0f;
+    }
+
+    // modulations : sources globales + connexions (voix et effets)
+    float fol[NumBuses];
+    for (int b = 0; b < NumBuses; ++b) fol[b] = follow[b];
     modGlobal.process (*modBlock, n, bpm, ppqNow, playing, engine.takeNoteOns(), engine.getModWheel(), engine.getAftertouch(),
-                       0.5f + 0.5f * engine.getBend());
+                       0.5f + 0.5f * engine.getBend(), fol);
     vp.mod = modBlock->numSlots > 0 ? modBlock.get() : nullptr;
+    applyGlobalModulation();
 
     if (panicFlag.exchange (false))
     {
@@ -202,17 +337,46 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         panicMute = (int) (0.01 * sr);
     }
 
-    const int cap = work.getNumSamples();
+    // routage bus -> bus (sans boucle) et réglages de sortie
+    int order[NumBuses];
+    bool edgeOk[NumBuses][NumBuses];
+    computeBusOrder (order, edgeOk);
+    bool anySolo = false;
+    for (int b = 0; b < NumBuses; ++b) anySolo |= raw.busSolo[b]->load() > 0.5f;
+    const bool zeroLat = raw.zeroLat->load() > 0.5f;
+    const int osFactor = (int) raw.destOS->load() == 2 ? 4 : ((int) raw.destOS->load() == 1 ? 2 : 1);
+    const float chaos = 0.5f + 0.5f * raw.chaosMacro->load();
+    const int latency = idg::Rack::rackLatency (zeroLat) * 2 + output.latency (false);
+    if (latency != lastLatency) { lastLatency = latency; setLatencySamples (latency); }
+    masterDry.delay = idg::Rack::rackLatency (zeroLat);
+
+    idg::OutputChain::Settings os;
+    os.hpFreq = raw.hpFreq->load();
+    os.monoOn = raw.monoOn->load() > 0.5f;
+    os.monoFreq = raw.monoFreq->load();
+    os.ottDepth = raw.ottDepth->load();
+    os.ottTime = raw.ottTime->load();
+    os.ottUp = raw.ottUp->load();
+    os.ottDown = raw.ottDown->load();
+    os.ottGainDb = raw.ottGain->load();
+    os.outGainDb = raw.outGain->load();
+    os.clipDriveDb = raw.clipDrive->load();
+    os.ceilingDb = raw.ceiling->load();
+    os.releaseMs = raw.limRelease->load();
+    const float inGain = idg::dsp::dbToGain (raw.inGain->load());
+    const float masterMix = raw.masterMix->load();
+    const float smooth = 1.0f - std::exp (-1.0f / (0.01f * (float) sr));
+    const float folAtt = std::exp (-1.0f / (0.005f * (float) sr)), folRel = std::exp (-1.0f / (0.15f * (float) sr));
+
     auto it = midi.cbegin();
     for (int done = 0; done < n;)
     {
-        const int len = juce::jmin (cap, n - done);
-        float* L = work.getWritePointer (0);
-        float* R = work.getWritePointer (1);
-        juce::FloatVectorOperations::clear (L, len);
-        juce::FloatVectorOperations::clear (R, len);
+        const int len = juce::jmin (ChunkSize, n - done);
+        for (int c = 0; c < 2 * NumBuses; ++c) { busBuf.clear (c, 0, len); busOut.clear (c, 0, len); }
+        float* bL[NumBuses] { busBuf.getWritePointer (0), busBuf.getWritePointer (2), busBuf.getWritePointer (4) };
+        float* bR[NumBuses] { busBuf.getWritePointer (1), busBuf.getWritePointer (3), busBuf.getWritePointer (5) };
 
-        // rendu découpé aux positions exactes des événements MIDI
+        // ---- voix (rendu découpé aux positions exactes des événements MIDI)
         int pos = 0;
         while (pos < len)
         {
@@ -226,37 +390,98 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
                 ++it;
             }
             vp.bendSemis = engine.getBend() * bendRange;
-            engine.render (L + pos, R + pos, next - pos, vp);
+            float* oL[NumBuses] { bL[0] + pos, bL[1] + pos, bL[2] + pos };
+            float* oR[NumBuses] { bR[0] + pos, bR[1] + pos, bR[2] + pos };
+            engine.render (oL, oR, next - pos, vp);
             pos = next;
         }
 
+        // ---- contexte des effets (tempo, position)
+        idg::ProcCtx ctx;
+        ctx.sr = sr; ctx.baseSr = sr; ctx.os = 1; ctx.bpm = bpm; ctx.ppq = ppqNow;
+        ctx.spb = sr * 60.0 / juce::jmax (1.0, bpm); ctx.playing = playing; ctx.scale = &scale; ctx.zeroLatency = zeroLat;
+        auto runRack = [&] (BusRack& br, float* L, float* R)
+        {
+            idg::RackControl rc;
+            rc.chaos = chaos;
+            rc.osFactor = osFactor;
+            for (int fx = 0; fx < idg::NumFx; ++fx)
+            {
+                if (br.seq[fx].enabled.load (std::memory_order_relaxed))
+                {
+                    bool gate, trig;
+                    br.seqRt[fx].tick (br.seq[fx], ppqNow, chaos, audioRng, gate, trig);
+                    rc.gate[fx] = gate; rc.trig[fx] = trig;
+                }
+                else { rc.gate[fx] = true; rc.trig[fx] = false; }
+            }
+            br.rack.process (L, R, len, ctx, rc);
+        };
+
+        // ---- bus A / B / C dans l'ordre (envois bus -> bus vers l'aval), puis master
+        float* mL = work.getWritePointer (0);
+        float* mR = work.getWritePointer (1);
+        juce::FloatVectorOperations::clear (mL, len);
+        juce::FloatVectorOperations::clear (mR, len);
+        for (int k = 0; k < NumBuses; ++k)
+        {
+            const int b = order[k];
+            runRack (*racks[(size_t) b], bL[b], bR[b]);
+            const bool muted = raw.busMute[b]->load() > 0.5f || (anySolo && raw.busSolo[b]->load() < 0.5f);
+            const float vdb = raw.busVol[b]->load();
+            const float vol = muted || vdb <= -59.9f ? 0.0f : idg::dsp::dbToGain (vdb);
+            const float pa = (juce::jlimit (-1.0f, 1.0f, raw.busPan[b]->load()) + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+            const float tl = std::cos (pa) * 1.41421f, tr = std::sin (pa) * 1.41421f;
+            float pk = 0.0f;
+            for (int i = 0; i < len; ++i)
+            {
+                busVolSm[b] += (vol - busVolSm[b]) * smooth;
+                busPanL[b] += (juce::jmin (1.0f, tl) - busPanL[b]) * smooth;
+                busPanR[b] += (juce::jmin (1.0f, tr) - busPanR[b]) * smooth;
+                const float l = bL[b][i] * busVolSm[b] * busPanL[b], r = bR[b][i] * busVolSm[b] * busPanR[b];
+                mL[i] += l; mR[i] += r;
+                const float a = juce::jmax (std::abs (l), std::abs (r));
+                pk = juce::jmax (pk, a);
+                follow[b] = a > follow[b] ? a + (follow[b] - a) * folAtt : a + (follow[b] - a) * folRel;
+                for (int t = 0; t < NumBuses; ++t)
+                    if (edgeOk[b][t])
+                    {
+                        const float amt = raw.busSend[b][t]->load();
+                        bL[t][i] += l * amt;
+                        bR[t][i] += r * amt;
+                    }
+            }
+            if (pk > busMeter[b].load (std::memory_order_relaxed)) busMeter[b].store (pk, std::memory_order_relaxed);
+            const float fv = juce::jlimit (0.0f, 1.0f, (idg::dsp::gainToDb (follow[b] + 1.0e-6f) + 48.0f) / 48.0f);
+            followerValue[b].store (fv, std::memory_order_relaxed);
+        }
+
+        // ---- master : rack facultatif + dry/wet, volume, chaîne de sortie
+        for (int i = 0; i < len; ++i) { mL[i] *= inGain; mR[i] *= inGain; dryL[(size_t) i] = mL[i]; dryR[(size_t) i] = mR[i]; }
+        for (int i = 0; i < len; ++i) masterDry.process (dryL[(size_t) i], dryR[(size_t) i]);
+        runRack (*racks[3], mL, mR);
         masterGain.setTargetValue (raw.masterVol->load() <= -59.9f ? 0.0f : idg::dsp::dbToGain (raw.masterVol->load()));
         for (int i = 0; i < len; ++i)
         {
+            masterMixSm += (masterMix - masterMixSm) * smooth;
             const float g = masterGain.getNextValue();
-            L[i] *= g;
-            R[i] *= g;
+            mL[i] = (dryL[(size_t) i] + (mL[i] - dryL[(size_t) i]) * masterMixSm) * g;
+            mR[i] = (dryR[(size_t) i] + (mR[i] - dryR[(size_t) i]) * masterMixSm) * g;
         }
+        output.process (mL, mR, len, os);
 
-        // chaîne de sortie (reprise d'IDGems) : en phase 2, seul le limiteur agit
-        idg::OutputChain::Settings os;
-        os.hpFreq = 5.0f;
-        os.monoOn = false;
-        os.ottDepth = 0.0f;
-        os.ceilingDb = raw.ceiling->load();
-        os.releaseMs = 80.0f;
-        output.process (L, R, len, os);
-
-        // Panic : fondu de sortie de 3 ms, puis (au bloc suivant, une fois le silence atteint)
-        // remise à zéro des voix et des buffers internes
+        // ---- Panic : fondu de 3 ms puis remise à zéro des voix, des effets et des buffers
         if (panicMute > 0)
         {
             if (panicGain <= 0.0f && panicMute <= len)
             {
                 engine.reset();
                 output.reset();
-                juce::FloatVectorOperations::clear (L, len);
-                juce::FloatVectorOperations::clear (R, len);
+                for (auto& br : racks) br->rack.reset();
+                masterDry.reset();
+                for (auto& f : follow) f = 0.0f;
+                juce::FloatVectorOperations::clear (mL, len);
+                juce::FloatVectorOperations::clear (mR, len);
                 panicMute = 0;
                 panicGain = 1.0f;
             }
@@ -266,8 +491,8 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
                 for (int i = 0; i < len; ++i)
                 {
                     panicGain = juce::jmax (0.0f, panicGain - step);
-                    L[i] *= panicGain;
-                    R[i] *= panicGain;
+                    mL[i] *= panicGain;
+                    mR[i] *= panicGain;
                 }
                 panicMute = juce::jmax (1, panicMute - len);
             }
@@ -275,18 +500,18 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
         if (buffer.getNumChannels() >= 2)
         {
-            buffer.copyFrom (0, done, L, len);
-            buffer.copyFrom (1, done, R, len);
+            buffer.copyFrom (0, done, mL, len);
+            buffer.copyFrom (1, done, mR, len);
         }
         else
         {
             auto* out = buffer.getWritePointer (0, done);
-            for (int i = 0; i < len; ++i) out[i] = 0.5f * (L[i] + R[i]);
+            for (int i = 0; i < len; ++i) out[i] = 0.5f * (mL[i] + mR[i]);
         }
 
         // mesures pour l'interface
         float pk[2] { 0.0f, 0.0f };
-        for (int i = 0; i < len; ++i) { pk[0] = juce::jmax (pk[0], std::abs (L[i])); pk[1] = juce::jmax (pk[1], std::abs (R[i])); }
+        for (int i = 0; i < len; ++i) { pk[0] = juce::jmax (pk[0], std::abs (mL[i])); pk[1] = juce::jmax (pk[1], std::abs (mR[i])); }
         for (int c = 0; c < 2; ++c)
             if (pk[c] > meterOut[c].load (std::memory_order_relaxed)) meterOut[c].store (pk[c], std::memory_order_relaxed);
         const float gr = output.takeGainReduction();
@@ -294,17 +519,17 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         {
             int s1, n1, s2, n2;
             scopeFifo.prepareToWrite (len, s1, n1, s2, n2);
-            for (int i = 0; i < n1; ++i) scopeData[(size_t) (s1 + i)] = 0.5f * (L[i] + R[i]);
-            for (int i = 0; i < n2; ++i) scopeData[(size_t) (s2 + i)] = 0.5f * (L[n1 + i] + R[n1 + i]);
+            for (int i = 0; i < n1; ++i) scopeData[(size_t) (s1 + i)] = 0.5f * (mL[i] + mR[i]);
+            for (int i = 0; i < n2; ++i) scopeData[(size_t) (s2 + i)] = 0.5f * (mL[n1 + i] + mR[n1 + i]);
             scopeFifo.finishedWrite (n1 + n2);
         }
 
+        ppqNow += (double) len * beatsPerSample;
         done += len;
     }
     for (; it != midi.cend(); ++it) engine.handleMidi ((*it).getMessage(), vp);
 
     activeVoices.store (engine.getActiveVoices(), std::memory_order_relaxed);
-    // affichage des modulations : voix la plus récente
     if (const auto* v = engine.newestVoice())
     {
         const float* m = v->modulated01();
@@ -315,6 +540,7 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
                 modShared.sourceValue[s].store (sv[s], std::memory_order_relaxed);
     }
     else for (int f = 0; f < NumModFields; ++f) modShared.fieldValue01[f].store (-1.0f, std::memory_order_relaxed);
+
     const double secs = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0);
     const float load = (float) (secs * sr / (double) n);
     cpuLoad.store (cpuLoad.load (std::memory_order_relaxed) * 0.9f + load * 0.1f, std::memory_order_relaxed);
@@ -469,6 +695,26 @@ juce::ValueTree IDGemsSynthProcessor::captureState()
     }
     state.removeChild (state.getChildWithName ("Modulation"), nullptr);
     state.appendChild (mod, nullptr);
+
+    // racks : ordre des effets + séquenceurs de modules
+    juce::ValueTree rk ("Racks");
+    for (int k = 0; k < idg::NumRacks; ++k)
+    {
+        juce::ValueTree r ("RACK");
+        r.setProperty ("index", k, nullptr);
+        juce::StringArray ord;
+        for (int v : racks[(size_t) k]->shared.getOrder()) ord.add (juce::String (v));
+        r.setProperty ("order", ord.joinIntoString (","), nullptr);
+        for (int fx = 0; fx < idg::NumFx; ++fx)
+        {
+            auto t = racks[(size_t) k]->seq[fx].toTree();
+            t.setProperty ("fx", fx, nullptr);
+            r.appendChild (t, nullptr);
+        }
+        rk.appendChild (r, nullptr);
+    }
+    state.removeChild (state.getChildWithName ("Racks"), nullptr);
+    state.appendChild (rk, nullptr);
     return state;
 }
 
@@ -480,6 +726,24 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
     copy.removeChild (extra, nullptr);
     auto mod = copy.getChildWithName ("Modulation");
     copy.removeChild (mod, nullptr);
+    auto rk = copy.getChildWithName ("Racks");
+    copy.removeChild (rk, nullptr);
+    for (int k = 0; k < idg::NumRacks; ++k)
+    {
+        auto& br = *racks[(size_t) k];
+        std::array<int, idg::NumFx> ord {};
+        for (int i = 0; i < idg::NumFx; ++i) ord[(size_t) i] = i;
+        for (auto& sq : br.seq) sq.clear(), sq.enabled = false;
+        auto r = rk.getChildWithProperty ("index", k);
+        if (r.isValid())
+        {
+            auto items = juce::StringArray::fromTokens (r.getProperty ("order").toString(), ",", "");
+            if (items.size() == idg::NumFx) for (int i = 0; i < idg::NumFx; ++i) ord[(size_t) i] = items[i].getIntValue();
+            for (auto c : r)
+                if (c.hasType ("SEQ")) { const int fx = c.getProperty ("fx", -1); if (fx >= 0 && fx < idg::NumFx) br.seq[fx].fromTree (c); }
+        }
+        br.shared.setOrder (ord);
+    }
     modShared.clearAll();
     for (int i = 0; i < NumLfos; ++i) modShared.setShape (i, idg::LfoShape::preset (0));
     for (auto c : mod)
@@ -545,6 +809,13 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
 
 void IDGemsSynthProcessor::resetToInit()
 {
+    for (auto& br : racks)
+    {
+        std::array<int, idg::NumFx> ord {};
+        for (int i = 0; i < idg::NumFx; ++i) ord[(size_t) i] = i;
+        br->shared.setOrder (ord);
+        for (auto& sq : br->seq) { sq.clear(); sq.enabled = false; }
+    }
     modShared.clearAll();
     for (int i = 0; i < NumLfos; ++i) modShared.setShape (i, idg::LfoShape::preset (0));
     for (auto* p : getParameters())

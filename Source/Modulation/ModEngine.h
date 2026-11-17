@@ -10,7 +10,10 @@ struct ModBlock
 {
     ActiveSlot slots[MaxModSlots];
     int numSlots = 0;
+    GlobalSlot gslots[MaxModSlots];      // connexions vers les effets des bus
+    int numGlobal = 0;
     float global[NumModSrc] {};      // valeurs des sources globales (0..1)
+    float globalR[NumModSrc] {};     // canal droit (LFO stéréo)
     float base01[NumModFields] {};       // valeur de base normalisée de chaque cible
     bool srcUsed[NumModSrc] {};
     bool fieldUsed[NumModFields] {};
@@ -36,7 +39,7 @@ public:
 
     /** Calcule les sources et prépare le ModBlock. noteOns = nombre de notes jouées depuis le dernier bloc. */
     void process (ModBlock& b, int numSamples, double bpm, double ppq, bool playing, int noteOns,
-                  float modWheel, float aftertouch, float bend01);
+                  float modWheel, float aftertouch, float bend01, const float* followers);
 
 private:
     ModShared* shared = nullptr;

@@ -34,7 +34,7 @@ void Voice::prepare (double sampleRate)
     for (auto& e : modEnv) e.prepare (sr);
     for (auto& o : osc) o.prepare (sr);
     noise.prepare (sr);
-    for (auto& f : filt) f.prepare (sr);
+    for (auto& fb : filt) for (auto& f : fb) f.prepare (sr);
     fadeStep = 1.0f / (fadeMs * 0.001f * (float) sr);
     smoothCoef = 1.0f - std::exp (-1.0f / (0.004f * (float) sr)); // ~4 ms
     kill();
@@ -67,7 +67,7 @@ void Voice::start (int n, float vel, uint64_t a, const VoiceParams& p, idg::dsp:
 
     for (int o = 0; o < NumOscs; ++o) osc[o].start (p.osc[o], n, rng);
     noise.reset (rng.next());
-    for (auto& f : filt) f.reset();
+    for (auto& fb : filt) for (auto& f : fb) f.reset();
     subPh = 0.0f;
     subLast = noiseLast = 0.0f;
 
@@ -268,11 +268,12 @@ void Voice::control (const VoiceParams& base)
         const auto& fp = p.filt[f];
         if (! fp.on) continue;
         const float kt = std::pow (2.0f, (pitchNow - 60.0f) / 12.0f * fp.key);
-        filt[f].setParams (fp.type, fp.cutoff * kt, fp.reso, fp.drive, fp.mix);
+        for (int b = 0; b < NumBuses; ++b)
+            if (p.busActive[b]) filt[b][f].setParams (fp.type, fp.cutoff * kt, fp.reso, fp.drive, fp.mix);
     }
 }
 
-void Voice::render (float* L, float* R, int n, const VoiceParams& base, idg::dsp::Rng& rng)
+void Voice::render (float* const* busL, float* const* busR, int n, const VoiceParams& base, idg::dsp::Rng& rng)
 {
     const auto& basic = WavetableBank::get()[0];
     const VoiceParams& p = local; // réglages modulés (mis à jour par control())
@@ -337,45 +338,49 @@ void Voice::render (float* L, float* R, int n, const VoiceParams& base, idg::dsp
             src[3][1] = nr * panR[1] * 1.4142f;
         }
 
-        // ---- routage vers les filtres
-        float f1[2] {}, f2[2] {}, direct[2] {};
-        const int routes[4] { p.osc[0].route, p.osc[1].route, p.sub.route, p.noise.route };
-        for (int s = 0; s < 4; ++s)
-        {
-            const float gl = src[s][0] * lvl[s], gr = src[s][1] * lvl[s];
-            switch (routes[s])
-            {
-                case RouteF1: f1[0] += gl; f1[1] += gr; break;
-                case RouteF2: f2[0] += gl; f2[1] += gr; break;
-                case RouteBoth:
-                    if (p.serial) { f1[0] += gl; f1[1] += gr; }
-                    else { f1[0] += gl * bothGain; f1[1] += gr * bothGain; f2[0] += gl * bothGain; f2[1] += gr * bothGain; }
-                    break;
-                default: direct[0] += gl; direct[1] += gr; break;
-            }
-        }
-
-        float outL, outR;
-        if (p.filt[0].on) filt[0].process (f1[0], f1[1]);
-        if (p.serial)
-        {
-            f2[0] += f1[0]; f2[1] += f1[1];
-            if (p.filt[1].on) filt[1].process (f2[0], f2[1]);
-            outL = f2[0] + direct[0];
-            outR = f2[1] + direct[1];
-        }
-        else
-        {
-            if (p.filt[1].on) filt[1].process (f2[0], f2[1]);
-            outL = f1[0] + f2[0] + direct[0];
-            outR = f1[1] + f2[1] + direct[1];
-        }
-
         const float g = e * velGain * fade;
-        L[i] += outL * g;
-        R[i] += outR * g;
+        const int routes[4] { p.osc[0].route, p.osc[1].route, p.sub.route, p.noise.route };
+        for (int bus = 0; bus < NumBuses; ++bus)
+        {
+            if (! base.busActive[bus]) continue;
+            // ---- routage vers les filtres (pondéré par l'envoi de chaque source vers ce bus)
+            float f1[2] {}, f2[2] {}, direct[2] {};
+            for (int s = 0; s < 4; ++s)
+            {
+                const float w = lvl[s] * base.send[s][bus];
+                if (w <= 0.0f) continue;
+                const float gl = src[s][0] * w, gr = src[s][1] * w;
+                switch (routes[s])
+                {
+                    case RouteF1: f1[0] += gl; f1[1] += gr; break;
+                    case RouteF2: f2[0] += gl; f2[1] += gr; break;
+                    case RouteBoth:
+                        if (p.serial) { f1[0] += gl; f1[1] += gr; }
+                        else { f1[0] += gl * bothGain; f1[1] += gr * bothGain; f2[0] += gl * bothGain; f2[1] += gr * bothGain; }
+                        break;
+                    default: direct[0] += gl; direct[1] += gr; break;
+                }
+            }
+            float outL, outR;
+            if (p.filt[0].on) filt[bus][0].process (f1[0], f1[1]);
+            if (p.serial)
+            {
+                f2[0] += f1[0]; f2[1] += f1[1];
+                if (p.filt[1].on) filt[bus][1].process (f2[0], f2[1]);
+                outL = f2[0] + direct[0];
+                outR = f2[1] + direct[1];
+            }
+            else
+            {
+                if (p.filt[1].on) filt[bus][1].process (f2[0], f2[1]);
+                outL = f1[0] + f2[0] + direct[0];
+                outR = f1[1] + f2[1] + direct[1];
+            }
+            busL[bus][i] += outL * g;
+            busR[bus][i] += outR * g;
+        }
     }
-    for (auto& f : filt) f.sanitize();
+    for (auto& fb : filt) for (auto& f : fb) f.sanitize();
 }
 
 // =============================================================================
@@ -612,7 +617,7 @@ void SynthEngine::checkMode (const VoiceParams& p)
         if (! v.isFree()) { v.keyDown = v.sustained = false; if (v.pendingNote >= 0) v.pendingKeyUp = true; else v.release(); }
 }
 
-void SynthEngine::render (float* L, float* R, int n, const VoiceParams& p)
+void SynthEngine::render (float* const* busL, float* const* busR, int n, const VoiceParams& p)
 {
     checkMode (p);
     if (p.voiceMode == VoicePoly)
@@ -624,6 +629,6 @@ void SynthEngine::render (float* L, float* R, int n, const VoiceParams& p)
     }
 
     for (auto& v : voices)
-        if (! v.isFree()) v.render (L, R, n, p, rng);
+        if (! v.isFree()) v.render (busL, busR, n, p, rng);
 }
 } // namespace idgs

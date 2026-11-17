@@ -16,7 +16,11 @@ juce::String sourceKey (int s)
         case MSrcModWheel: return "modwheel";
         case MSrcAftertouch: return "aftertouch";
         case MSrcPitchBend: return "pitchbend";
-        default: return {};
+        default: break;
+    }
+    if (s >= MSrcFollow0 && s < NumModSrc) return "follow" + juce::String (s - MSrcFollow0 + 1);
+    {
+        return {};
     }
 }
 
@@ -40,7 +44,11 @@ juce::String sourceName (int s)
         case MSrcModWheel: return "Molette";
         case MSrcAftertouch: return "Aftertouch";
         case MSrcPitchBend: return "Pitch bend";
-        default: return {};
+        default: break;
+    }
+    if (s >= MSrcFollow0 && s < NumModSrc) return IDG_T ("Suiveur bus ") + juce::String::charToString ((juce::juce_wchar) ('A' + s - MSrcFollow0));
+    {
+        return {};
     }
 }
 
@@ -50,6 +58,7 @@ juce::Colour sourceColour (int s)
     if (s >= MSrcLfo0 && s < MSrcRnd0) return juce::Colour (0xff2fa8ff);
     if (s >= MSrcRnd0 && s < MSrcEnv0) return juce::Colour (0xffb26bff);
     if (s >= MSrcEnv0 && s < MSrcVelocity) return juce::Colour (0xff3ee8b0);
+    if (s >= MSrcFollow0) return juce::Colour (0xffff8fb0);
     return juce::Colour (0xffffd23f);
 }
 
@@ -117,6 +126,7 @@ void ModTargets::init (juce::AudioProcessor& p)
 {
     const auto& params = p.getParameters();
     toField.assign ((size_t) params.size(), -1);
+    toGlobal.assign ((size_t) params.size(), { -1, -1 });
     ids.clear();
     std::map<juce::String, int> idToIndex;
     for (int i = 0; i < params.size(); ++i)

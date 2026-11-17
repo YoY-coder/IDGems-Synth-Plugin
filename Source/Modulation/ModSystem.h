@@ -17,7 +17,8 @@ enum ModSrcId
     MSrcModWheel,
     MSrcAftertouch,
     MSrcPitchBend,
-    NumModSrc
+    MSrcFollow0,                         // suiveurs d'enveloppe des bus A, B, C
+    NumModSrc = MSrcFollow0 + NumBuses
 };
 
 juce::String sourceKey (int src);            // "macro1", "lfo3", "env2", "velocity"...
@@ -51,6 +52,8 @@ constexpr int MaxModSlots = 64;
 
 /** Copie compacte d'une connexion pour le thread audio (lue une fois par bloc). */
 struct ActiveSlot { int src, field, param; float depth; bool bipolar; };
+/** Connexion vers un paramètre global (effets des bus) : rack + index dans la banque du rack. */
+struct GlobalSlot { int src, rack, index; float depth; bool bipolar; };
 
 /** Partie partagée interface <-> audio. */
 struct ModShared
@@ -84,7 +87,16 @@ public:
     void init (juce::AudioProcessor& p);
     int fieldForParam (int paramIndex) const { return paramIndex >= 0 && paramIndex < (int) toField.size() ? toField[(size_t) paramIndex] : -1; }
     int paramForField (int f) const { return fields[(size_t) f].param; }
-    bool isModulatable (int paramIndex) const { return fieldForParam (paramIndex) >= 0; }
+    bool isModulatable (int paramIndex) const { return fieldForParam (paramIndex) >= 0 || globalTarget (paramIndex).first >= 0; }
+    /** Paramètres globaux (effets) : (rack, index dans la banque), ou (-1, -1). */
+    void setGlobalTarget (int paramIndex, int rack, int index)
+    {
+        if (paramIndex >= 0 && paramIndex < (int) toGlobal.size()) toGlobal[(size_t) paramIndex] = { rack, index };
+    }
+    std::pair<int, int> globalTarget (int paramIndex) const
+    {
+        return paramIndex >= 0 && paramIndex < (int) toGlobal.size() ? toGlobal[(size_t) paramIndex] : std::pair<int, int> { -1, -1 };
+    }
     float toReal (int f, float norm01) const { return fields[(size_t) f].range.convertFrom0to1 (juce::jlimit (0.0f, 1.0f, norm01)); }
     juce::RangedAudioParameter* parameter (int f) const { return fields[(size_t) f].prm; }
     juce::String paramId (int paramIndex) const;
@@ -94,6 +106,7 @@ private:
     struct Field { int param = -1; juce::RangedAudioParameter* prm = nullptr; juce::NormalisableRange<float> range; };
     std::array<Field, NumModFields> fields;
     std::vector<int> toField;
+    std::vector<std::pair<int, int>> toGlobal;
     juce::StringArray ids;
 };
 } // namespace idgs
