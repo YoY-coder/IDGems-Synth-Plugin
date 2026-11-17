@@ -5,6 +5,16 @@ using namespace idgs;
 
 namespace
 {
+const std::vector<juce::String>& playKeys()
+{
+    static const std::vector<juce::String> k {
+        "play_mode", "arp_mode", "arp_oct", "arp_rate", "arp_gate", "arp_swing", "arp_hold", "seq_rate", "seq_len", "seq_swing", "seq_follow",
+        "seq_mutate", "seq_rnd_notes", "seq_rnd_oct", "seq_rnd_ratchet", "gen_style", "gen_density", "gen_range", "gen_jump", "gen_accent",
+        "gen_auto", "scale_on", "scale_key", "scale_type", "spray_on", "spray_density", "spray_range", "spray_time", "spray_dur", "spray_vel",
+        "spray_max", "mr_on", "mr_amount", "mr_pitch", "mr_grain", "mr_cutoff", "mr_pan", "mr_phase" };
+    return k;
+}
+
 const std::vector<juce::String>& texKeys()
 {
     static const std::vector<juce::String> k {
@@ -46,6 +56,7 @@ IDGemsSynthProcessor::IDGemsSynthProcessor()
         x.drive = r (filtId (f, "drive")); x.key = r (filtId (f, "key")); x.mix = r (filtId (f, "mix"));
     }
     for (auto& k : texKeys()) texRaw.push_back (r (k));
+    for (auto& k : playKeys()) playRaw.push_back (r (k));
     raw.subOn = r (P::subOn); raw.subShape = r (P::subShape); raw.subOct = r (P::subOct); raw.subLevel = r (P::subLevel);
     raw.subPan = r (P::subPan); raw.subRoute = r (P::subRoute);
     raw.noiseOn = r (P::noiseOn); raw.noiseType = r (P::noiseType); raw.noiseLevel = r (P::noiseLevel); raw.noisePan = r (P::noisePan);
@@ -111,6 +122,8 @@ void IDGemsSynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
 {
     sr = sampleRate;
     engine.prepare (sr);
+    noteGen.prepare (sr);
+    genMidi.ensureSize (8192);
     modGlobal.prepare (sr);
     output.prepare (sr);
     work.setSize (2, juce::jmax (ChunkSize, samplesPerBlock), false, true, false);
@@ -341,6 +354,23 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     readParams (vp);
     const float bendRange = std::round (raw.bendRange->load());
 
+    // réglages de jeu (ordre de playKeys())
+    PlaySettings ps;
+    {
+        int k = 0;
+        auto v = [this, &k] { return playRaw[(size_t) k++]->load(); };
+        ps.mode = (int) v(); ps.arpMode = (int) v(); ps.arpOct = (int) v(); ps.arpRate = (int) v(); ps.arpGate = v(); ps.arpSwing = v();
+        ps.arpHold = v() > 0.5f; ps.seqRate = (int) v(); ps.seqLen = (int) v(); ps.seqSwing = v(); ps.seqFollow = (int) v();
+        ps.seqMutate = v(); ps.rndNotes = v(); ps.rndOct = v(); ps.rndRatchet = v(); ps.genStyle = (int) v(); ps.genDensity = v();
+        ps.genRange = (int) v(); ps.genJump = v(); ps.genAccent = v(); ps.genAuto = (int) v();
+        scale.enabled = v() > 0.5f; scale.key = (int) v(); scale.type = (int) v();
+        ps.scale = scale;
+        ps.sprayOn = v() > 0.5f; ps.sprayDensity = (int) v(); ps.sprayRange = (int) v(); ps.sprayTime = v(); ps.sprayDur = v();
+        ps.sprayVel = v(); ps.sprayMax = (int) v();
+        vp.micro.on = v() > 0.5f; vp.micro.amount = v(); vp.micro.pitch = v() > 0.5f; vp.micro.grain = v() > 0.5f;
+        vp.micro.cutoff = v() > 0.5f; vp.micro.pan = v() > 0.5f; vp.micro.phase = v() > 0.5f;
+    }
+
     // transport de l'hôte
     double bpm = 120.0;
     bool playing = false;
@@ -353,6 +383,9 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         }
     uiBpm.store (bpm);
     const double beatsPerSample = bpm / 60.0 / sr;
+
+    // couche de jeu : arpège / séquenceur / générateur / Note Spray / gamme
+    noteGen.process (midi, genMidi, n, ppqNow, bpm, playing, ps, noteSeq, audioRng);
 
     // envois vers les bus
     for (int src = 0; src < NumSendSources; ++src)
@@ -408,7 +441,7 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     const float smooth = 1.0f - std::exp (-1.0f / (0.01f * (float) sr));
     const float folAtt = std::exp (-1.0f / (0.005f * (float) sr)), folRel = std::exp (-1.0f / (0.15f * (float) sr));
 
-    auto it = midi.cbegin();
+    auto it = genMidi.cbegin();
     for (int done = 0; done < n;)
     {
         const int len = juce::jmin (ChunkSize, n - done);
@@ -421,7 +454,7 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         while (pos < len)
         {
             int next = len;
-            while (it != midi.cend())
+            while (it != genMidi.cend())
             {
                 const auto meta = *it;
                 const int at = meta.samplePosition - done;
@@ -567,7 +600,7 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         ppqNow += (double) len * beatsPerSample;
         done += len;
     }
-    for (; it != midi.cend(); ++it) engine.handleMidi ((*it).getMessage(), vp);
+    for (; it != genMidi.cend(); ++it) engine.handleMidi ((*it).getMessage(), vp);
 
     activeVoices.store (engine.getActiveVoices(), std::memory_order_relaxed);
     if (const auto* v = engine.newestVoice())
@@ -700,6 +733,78 @@ juce::String IDGemsSynthProcessor::dropFiles (int osc, const juce::Array<juce::F
     return msg;
 }
 
+void IDGemsSynthProcessor::generateNow()
+{
+    idg::Scale sc;
+    sc.enabled = getValue ("scale_on") > 0.5f;
+    sc.key = (int) getValue ("scale_key");
+    sc.type = (int) getValue ("scale_type");
+    const int g = ++noteGen.genCounter;
+    generatePattern (noteSeq, (int) getValue ("seq_len"), (int) getValue ("gen_style"), getValue ("gen_density"), (int) getValue ("gen_range"),
+                     getValue ("gen_jump"), getValue ("gen_accent"), sc, (uint32_t) g * 2654435761u + (uint32_t) juce::Time::getMillisecondCounter());
+}
+
+juce::File IDGemsSynthProcessor::exportMidi (int bars)
+{
+    // motif courant en clip MIDI (960 ticks par noire), base C3
+    juce::MidiMessageSequence seqOut;
+    constexpr double tpq = 960.0;
+    const int mode = (int) getValue ("play_mode");
+    idg::Scale sc;
+    sc.enabled = getValue ("scale_on") > 0.5f;
+    sc.key = (int) getValue ("scale_key");
+    sc.type = (int) getValue ("scale_type");
+    auto q = [&sc] (int n) { return juce::jlimit (0, 127, sc.enabled ? (int) sc.snapMidi ((float) n) : n); };
+    const double totalBeats = 4.0 * bars;
+    if (mode == PlayArp)
+    {
+        const double step = divisionBeats ((int) getValue ("arp_rate"));
+        const float gate = getValue ("arp_gate");
+        int chord[8], nc = juce::jmin (8, noteGen.lastChordSize.load());
+        for (int i = 0; i < nc; ++i) chord[i] = noteGen.lastChord[i].load();
+        if (nc == 0) { chord[0] = 60; chord[1] = 64; chord[2] = 67; nc = 3; }
+        std::sort (chord, chord + nc);
+        const int oct = (int) getValue ("arp_oct");
+        int idx = 0;
+        for (double t = 0.0; t < totalBeats - 1.0e-6; t += step, ++idx)
+        {
+            const int k = idx % (nc * oct);
+            const int note = q (chord[k % nc] + 12 * (k / nc));
+            seqOut.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), t * tpq);
+            seqOut.addEvent (juce::MidiMessage::noteOff (1, note), (t + step * gate) * tpq);
+        }
+    }
+    else
+    {
+        const double step = divisionBeats ((int) getValue ("seq_rate"));
+        const int len = (int) getValue ("seq_len");
+        int idx = 0;
+        for (double t = 0.0; t < totalBeats - 1.0e-6; t += step, ++idx)
+        {
+            const int i = idx % len;
+            if (! noteSeq.on[i].load()) continue;
+            const int note = q (60 + noteSeq.note[i].load());
+            const int r = juce::jmax (1, noteSeq.ratchet[i].load());
+            for (int k = 0; k < r; ++k)
+            {
+                const double st = t + step * k / r;
+                seqOut.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) juce::jlimit (1, 127, (int) (noteSeq.vel[i].load() * 127.0f))), st * tpq);
+                seqOut.addEvent (juce::MidiMessage::noteOff (1, note), (st + step / r * (noteSeq.slide[i].load() ? 1.0f : noteSeq.gate[i].load())) * tpq);
+            }
+        }
+    }
+    seqOut.updateMatchedPairs();
+    juce::MidiFile mf;
+    mf.setTicksPerQuarterNote ((int) tpq);
+    mf.addTrack (seqOut);
+    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("IDGems Synth");
+    dir.createDirectory();
+    auto f = dir.getChildFile ("IDGems Motif " + juce::Time::getCurrentTime().formatted ("%H-%M-%S") + ".mid");
+    juce::FileOutputStream os (f);
+    if (os.openedOk()) mf.writeTo (os);
+    return f;
+}
+
 void IDGemsSynthProcessor::setTableFromCycles (int osc, const std::vector<float>& cycles, const juce::String& name)
 {
     setTable (osc, Wavetable::fromFrames (name, cycles));
@@ -805,6 +910,8 @@ juce::ValueTree IDGemsSynthProcessor::captureState()
     }
     state.removeChild (state.getChildWithName ("Racks"), nullptr);
     state.appendChild (rk, nullptr);
+    state.removeChild (state.getChildWithName ("NOTESEQ"), nullptr);
+    state.appendChild (noteSeq.toTree(), nullptr);
     return state;
 }
 
@@ -818,6 +925,9 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
     copy.removeChild (mod, nullptr);
     auto rk = copy.getChildWithName ("Racks");
     copy.removeChild (rk, nullptr);
+    auto ns = copy.getChildWithName ("NOTESEQ");
+    copy.removeChild (ns, nullptr);
+    noteSeq.fromTree (ns);
     for (int k = 0; k < idg::NumRacks; ++k)
     {
         auto& br = *racks[(size_t) k];
@@ -909,6 +1019,7 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
 
 void IDGemsSynthProcessor::resetToInit()
 {
+    noteSeq.clear();
     for (auto& br : racks)
     {
         std::array<int, idg::NumFx> ord {};

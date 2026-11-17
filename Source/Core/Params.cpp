@@ -19,6 +19,18 @@ double divisionBeats (int i)
 }
 
 const juce::StringArray& oscModeNames() { static const juce::StringArray n { "Wavetable", "Sample", "Multisample", "Granulaire", "Spectral" }; return n; }
+const juce::StringArray& scaleTypeNames()
+{
+    static const juce::StringArray n { "Majeure", "Mineure", "Dorien", "Phrygien", "Lydien", "Mixolydien", IDG_T ("Mineure harm."),
+                                       "Penta maj.", "Penta min.", "Blues", "Par tons", "Chromatique" };
+    return n;
+}
+const juce::StringArray& keyNames()
+{
+    static const juce::StringArray n { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+    return n;
+}
+
 const juce::StringArray& texEngineNames()
 {
     static const juce::StringArray n { "Granulaire", "Spectral", "Chaos", IDG_T ("Résonateur"), IDG_T ("Bruit sculpté"), "Data bending" };
@@ -224,6 +236,40 @@ juce::String helpFor (const juce::String& fullId)
     auto it = h.find (id);
     if (it != h.end()) return it->second;
     if (id.startsWith ("send_")) return IDG_T ("Niveau d'envoi de cette source vers ce bus d'effets.");
+    if (id.startsWith ("arp_") || id.startsWith ("seq_") || id.startsWith ("gen_") || id.startsWith ("scale_") || id.startsWith ("spray_")
+        || id.startsWith ("mr_") || id == "play_mode")
+    {
+        static const std::map<juce::String, juce::String> ph {
+            { "play_mode", IDG_T ("Direct : les notes jouées. Arpège : arpégiateur. Séquenceur : motif de 32 pas. Générateur : séquenceur rempli par le générateur de patterns.") },
+            { "arp_mode", IDG_T ("Ordre de l'arpège : montant, descendant, aller-retour, ordre joué, aléatoire.") },
+            { "arp_oct", IDG_T ("Nombre d'octaves parcourues.") },
+            { "arp_rate", IDG_T ("Vitesse (division rythmique, ternaires T et pointées D).") },
+            { "arp_gate", IDG_T ("Durée des notes (en fraction du pas).") },
+            { "arp_hold", IDG_T ("Maintient l'arpège quand on relâche les touches.") },
+            { "seq_follow", IDG_T ("Note tenue : le motif joue tant qu'une touche est enfoncée, transposé par la note. Toujours : joue en continu à partir de C3.") },
+            { "seq_mutate", IDG_T ("Mutation progressive : le motif change un peu à chaque cycle (les pas verrouillés ne bougent jamais).") },
+            { "seq_rnd_notes", IDG_T ("Notes aléatoires pondérées par la gamme, tirées à chaque pas.") },
+            { "seq_rnd_oct", IDG_T ("Probabilité de sauts d'octave aléatoires.") },
+            { "seq_rnd_ratchet", IDG_T ("Probabilité de ratchets aléatoires.") },
+            { "gen_style", IDG_T ("Style du générateur de patterns : euclidien, marche aléatoire, arpège brisé, polyrythme 3 contre 4.") },
+            { "gen_density", IDG_T ("Densité de notes.") },
+            { "gen_range", IDG_T ("Étendue en octaves.") },
+            { "gen_jump", IDG_T ("Probabilité de grands intervalles.") },
+            { "gen_accent", IDG_T ("Contraste de vélocité (accents).") },
+            { "gen_auto", IDG_T ("Régénère automatiquement le motif tous les N cycles.") },
+            { "scale_on", IDG_T ("Quantification sur gamme de tout ce qui touche au pitch (notes, random, Note Spray, effets). Éteint = atonal.") },
+            { "spray_on", IDG_T ("Note Spray : chaque note jouée déclenche un nuage de micro-notes autour d'elle.") },
+            { "spray_density", IDG_T ("Nombre de micro-notes par note jouée.") },
+            { "spray_range", IDG_T ("Étendue de hauteur autour de la note (quantifiée sur la gamme si active).") },
+            { "spray_time", IDG_T ("Dispersion des micro-notes dans le temps.") },
+            { "spray_dur", IDG_T ("Durée de chaque micro-note.") },
+            { "spray_vel", IDG_T ("Vélocité aléatoire des micro-notes.") },
+            { "spray_max", IDG_T ("Nombre maximum de voix utilisées par le spray.") },
+            { "mr_on", IDG_T ("Micro-random par voix : chaque note tire de légères variations (pitch, grain, coupure, pan, phase).") },
+            { "mr_amount", IDG_T ("Quantité globale des variations.") } };
+        auto it3 = ph.find (id);
+        return it3 == ph.end() ? juce::String() : it3->second;
+    }
     if (id.startsWith ("tex_") || id.startsWith ("fp_"))
     {
         static const std::map<juce::String, juce::String> th {
@@ -454,6 +500,46 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         B.f ("fp_speed", "Fingerprint Speed", 0.0f, 4.0f, 1.0f, [] (float v, int) { return "x" + juce::String (v, 2); }, 1.0f);
         B.b ("fp_loop", "Fingerprint Loop", true);
     }
+
+    // ---- Jeu : arpégiateur, séquenceur, générateur de patterns, gamme, Note Spray, micro-random
+    B.c ("play_mode", "Play Mode", { "Direct", IDG_T ("Arpège"), IDG_T ("Séquenceur"), IDG_T ("Générateur") }, PlayDirect);
+    B.c ("arp_mode", "Arp Mode", { "Up", "Down", "Up / Down", IDG_T ("Ordre joué"), IDG_T ("Aléatoire") }, ArpUp);
+    B.i ("arp_oct", "Arp Octaves", 1, 4, 1);
+    B.c ("arp_rate", "Arp Rate", divisionNames(), divisionNames().indexOf ("1/16"));
+    B.f ("arp_gate", "Arp Gate", 0.05f, 1.0f, 0.6f, pctText);
+    B.f ("arp_swing", "Arp Swing", 0.0f, 1.0f, 0.0f, pctText);
+    B.b ("arp_hold", "Arp Hold", false);
+    B.c ("seq_rate", "Seq Rate", divisionNames(), divisionNames().indexOf ("1/16"));
+    B.i ("seq_len", "Seq Length", 1, 32, 16);
+    B.f ("seq_swing", "Seq Swing", 0.0f, 1.0f, 0.0f, pctText);
+    B.c ("seq_follow", "Seq Follow", { IDG_T ("Note tenue"), IDG_T ("Toujours (C3)") }, 0);
+    B.f ("seq_mutate", "Seq Mutation", 0.0f, 1.0f, 0.0f, pctText);
+    B.f ("seq_rnd_notes", "Seq Random Notes", 0.0f, 1.0f, 0.0f, pctText);
+    B.f ("seq_rnd_oct", "Seq Random Octave", 0.0f, 1.0f, 0.0f, pctText);
+    B.f ("seq_rnd_ratchet", "Seq Random Ratchet", 0.0f, 1.0f, 0.0f, pctText);
+    B.c ("gen_style", "Generator Style", { "Euclidien", IDG_T ("Marche aléatoire"), IDG_T ("Arpège brisé"), "Polyrythme" }, GenEuclid);
+    B.f ("gen_density", "Generator Density", 0.05f, 1.0f, 0.5f, pctText);
+    B.i ("gen_range", "Generator Range", 1, 4, 2, [] (int v, int) { return juce::String (v) + " oct"; });
+    B.f ("gen_jump", "Generator Leaps", 0.0f, 1.0f, 0.3f, pctText);
+    B.f ("gen_accent", "Generator Accents", 0.0f, 1.0f, 0.4f, pctText);
+    B.c ("gen_auto", "Generator Auto", { "Off", "1 cycle", "2 cycles", "4 cycles", "8 cycles" }, 0);
+    B.b ("scale_on", "Scale On", false);
+    B.c ("scale_key", "Scale Key", keyNames(), 0);
+    B.c ("scale_type", "Scale Type", scaleTypeNames(), 1);
+    B.b ("spray_on", "Note Spray On", false);
+    B.f ("spray_density", "Spray Density", 1.0f, 16.0f, 4.0f, [] (float v, int) { return juce::String ((int) v) + " notes"; }, 4.0f);
+    B.i ("spray_range", "Spray Range", 0, 24, 7, [] (int v, int) { return "+/- " + juce::String (v) + " st"; });
+    B.f ("spray_time", "Spray Time", 0.0f, 2000.0f, 300.0f, msText, 300.0f, "ms");
+    B.f ("spray_dur", "Spray Duration", 10.0f, 2000.0f, 150.0f, msText, 150.0f, "ms");
+    B.f ("spray_vel", "Spray Velocity Rand", 0.0f, 1.0f, 0.5f, pctText);
+    B.i ("spray_max", "Spray Max Voices", 1, 16, 8);
+    B.b ("mr_on", "Micro Random On", false);
+    B.f ("mr_amount", "Micro Random Amount", 0.0f, 1.0f, 0.3f, pctText);
+    B.b ("mr_pitch", "Micro Random Pitch", true);
+    B.b ("mr_grain", "Micro Random Grain", true);
+    B.b ("mr_cutoff", "Micro Random Cutoff", true);
+    B.b ("mr_pan", "Micro Random Pan", true);
+    B.b ("mr_phase", "Micro Random Phase", true);
 
     // ---- Envois des sources vers les bus (par défaut : tout dans le bus A)
     static const char* srcNames[] { "Osc A", "Osc B", "Sub", "Noise", "Texture" };

@@ -37,7 +37,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
           tex (p),
           fx (p),
           mod (p),
-          arp (IDG_T ("ARPÉ // SÉQUENCEUR"), { IDG_T ("Phase 6 : arpégiateur, séquenceur 32 pas, gammes, mutation,"), IDG_T ("export MIDI en glisser-déposer, Note Spray.") }),
+          arp (p),
           exp ("EXPORT", { IDG_T ("Phase 8 : enregistreur, rolling recorder, boucle Feed,"), IDG_T ("export WAV en glisser-déposer, batch render, Draft / HQ.") }),
           masterVol (p, idgs::P::masterVol, "Volume"),
           ceiling (p, idgs::P::ceiling, "Plafond", Theme::blue),
@@ -189,7 +189,8 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
     MacroColumn macros;
     TexturePage tex;
     FxPage fx;
-    ComingSoonPage arp, exp;
+    PlayPage arp;
+    ComingSoonPage exp;
     ModListPage mod;
     std::vector<juce::Component*> pages;
     juce::TextButton panicBtn;

@@ -8,6 +8,9 @@ constexpr int MaxVoices = 32;
 constexpr int NumOscs = 2;
 
 enum OscMode { ModeWavetable, ModeSample, ModeMulti, ModeGranular, ModeSpectral, NumOscModes };
+enum PlayMode { PlayDirect, PlayArp, PlaySeq, PlayGen, NumPlayModes };
+enum ArpMode { ArpUp, ArpDown, ArpUpDown, ArpPlayed, ArpRandom };
+enum GenStyle { GenEuclid, GenWalk, GenBroken, GenPoly, NumGenStyles };
 enum TexEngine { TexGranular, TexSpectral, TexChaos, TexResonator, TexNoise, TexDataBend, NumTexEngines };
 
 enum WarpMode
@@ -37,6 +40,8 @@ const juce::StringArray& filterTypeNames();
 const juce::StringArray& noiseTypeNames();
 const juce::StringArray& tableChoiceNames(); // tables d'usine + « Personnalisée »
 const juce::StringArray& texEngineNames();
+const juce::StringArray& scaleTypeNames();
+const juce::StringArray& keyNames();
 /** Paramètre de l'Osc Texture : texId ("g_size") -> "tex_g_size". Empreinte : "fp_..." */
 inline juce::String texId (const char* key) { return juce::String ("tex_") + key; }
 

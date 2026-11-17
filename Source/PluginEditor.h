@@ -5,6 +5,7 @@
 #include "UI/PresetBrowser.h"
 #include "UI/FxPage.h"
 #include "UI/TexturePage.h"
+#include "UI/PlayPage.h"
 
 /** Interface d'IDGems Synth : barre du haut toujours visible, onglets façon Serum, clavier à l'écran.
     Redimensionnable : tout le contenu est dessiné à une taille de référence puis mis à l'échelle. */

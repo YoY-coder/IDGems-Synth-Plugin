@@ -20,6 +20,7 @@ struct VoiceParams
     NoiseParams noise;
     TexParams tex;
     FpParams fp;
+    struct Micro { bool on = false, pitch = true, grain = true, cutoff = true, pan = true, phase = true; float amount = 0.3f; } micro;
     FilterParams filt[2];
     bool serial = true;
     int voiceMode = VoicePoly;
@@ -110,6 +111,7 @@ private:
     Envelope modEnv[NumEnvelopes];           // ENV 2 à 8 (l'index 0 n'est pas utilisé : ENV 1 = env)
     float lfoPh[NumLfos] {}, lfoSm[NumLfos] {};
     float noteRand = 0.0f, ageSec = 0.0f;
+    float mrPitch = 0.0f, mrCut = 0.0f, mrPan = 0.0f, mrGrain = 0.0f; // micro-random tiré à chaque note
     float srcVal[NumModSrc] {};
     float mod01[NumModFields] {};
 };

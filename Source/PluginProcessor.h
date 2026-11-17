@@ -6,6 +6,7 @@
 #include "Modulation/ModEngine.h"
 #include "Fx/Rack.h"
 #include "Fx/Sequencer.h"
+#include "Play/NoteGen.h"
 
 /** Processeur principal d'IDGems Synth. */
 class IDGemsSynthProcessor : public juce::AudioProcessor, private juce::Timer
@@ -64,7 +65,13 @@ public:
     void panic() { panicFlag.store (true); }
 
     juce::AudioProcessorValueTreeState apvts;
-    idgs::ModShared modShared;               // connexions de modulation + formes de LFO (partagé avec l'interface)
+    idgs::ModShared modShared;
+    idgs::NoteSeqData noteSeq;               // pas du séquenceur de notes (partagés avec l'interface)
+    idgs::NoteGen noteGen;
+    /** Export MIDI du motif courant (séquenceur / générateur / arpège) dans un fichier temporaire. */
+    juce::File exportMidi (int bars);
+    /** Générateur de patterns : nouveau motif (thread de l'interface). */
+    void generateNow();               // connexions de modulation + formes de LFO (partagé avec l'interface)
     idgs::ModTargets modTargets;
     // état de l'interface de modulation (survol / glisser-déposer), lu par tous les potards
     std::atomic<int> uiHoverSource { -1 }, uiDragSource { -1 }, uiHoverParam { -1 };
@@ -112,6 +119,8 @@ private:
     idgs::SynthEngine engine;
     std::array<std::unique_ptr<BusRack>, idg::NumRacks> racks;
     idg::Scale scale;
+    juce::MidiBuffer genMidi;
+    std::vector<std::atomic<float>*> playRaw;
     idg::dsp::Rng audioRng;
     juce::AudioBuffer<float> busBuf;          // 3 bus stéréo (entrées) + master stéréo
     juce::AudioBuffer<float> busOut;          // sorties des bus (pour les envois bus -> bus)

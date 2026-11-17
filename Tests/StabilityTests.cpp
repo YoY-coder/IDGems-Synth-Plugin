@@ -965,6 +965,109 @@ int main (int argc, char** argv)
         dir.deleteRecursively();
     }
 
+    // ===================================================================== PHASE 6
+    // 24. Jeu : arpège, séquenceur, générateur, gamme, Note Spray, micro-random, export MIDI
+    {
+        std::cout << "24. Arpege / sequenceur / generateur / gamme / spray / micro-random / export MIDI..." << std::endl;
+        auto countNotes = [] (IDGemsSynthProcessor& proc, PlaySettings ps, std::function<void (juce::MidiBuffer&, int)> feed, double secs, std::vector<int>* notes = nullptr)
+        {
+            NoteGen gen;
+            gen.prepare (48000.0);
+            idg::dsp::Rng rng;
+            juce::MidiBuffer in, out;
+            out.ensureSize (8192);
+            int ons = 0;
+            const int blocks = (int) (secs * 48000.0 / 512.0);
+            for (int b = 0; b < blocks; ++b)
+            {
+                in.clear();
+                feed (in, b);
+                gen.process (in, out, 512, b * 512 / 48000.0 * 2.0, 120.0, true, ps, proc.noteSeq, rng);
+                for (const auto m : out) if (m.getMessage().isNoteOn()) { ++ons; if (notes) notes->push_back (m.getMessage().getNoteNumber()); }
+            }
+            return ons;
+        };
+        IDGemsSynthProcessor proc;
+        auto hold = [] (juce::MidiBuffer& in, int b) { if (b == 0) { in.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0); in.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0); in.addEvent (juce::MidiMessage::noteOn (1, 67, 0.8f), 0); } };
+        {
+            PlaySettings ps; ps.mode = PlayArp; ps.arpRate = idgs::divisionNames().indexOf ("1/16");
+            // 2 s à 120 BPM = 4 temps = 16 doubles-croches
+            const int n = countNotes (proc, ps, hold, 2.0);
+            check (n >= 14 && n <= 18, "arpege 1/16 : " + juce::String (n) + " notes au lieu de ~16");
+        }
+        {
+            PlaySettings ps; ps.mode = PlaySeq; ps.seqFollow = 1; ps.seqLen = 16; ps.seqRate = idgs::divisionNames().indexOf ("1/16");
+            int expected = 0;
+            for (int i = 0; i < 16; ++i) expected += proc.noteSeq.on[i].load() ? proc.noteSeq.ratchet[i].load() : 0;
+            const int n = countNotes (proc, ps, [] (juce::MidiBuffer&, int) {}, 2.0);
+            check (std::abs (n - expected) <= 2, "sequenceur : " + juce::String (n) + " notes au lieu de " + juce::String (expected));
+        }
+        {
+            // gamme : toutes les notes produites sont dans la gamme (C mineur), y compris le spray et le random
+            PlaySettings ps; ps.mode = PlaySeq; ps.seqFollow = 1; ps.rndNotes = 1.0f; ps.sprayOn = true; ps.sprayDensity = 6; ps.sprayRange = 12;
+            ps.scale.enabled = true; ps.scale.key = 0; ps.scale.type = 1;
+            std::vector<int> notes;
+            countNotes (proc, ps, [] (juce::MidiBuffer&, int) {}, 3.0, &notes);
+            bool allIn = ! notes.empty();
+            for (int nn : notes) allIn &= ps.scale.contains (nn % 12);
+            check (allIn, "quantification sur gamme : note hors gamme (" + juce::String ((int) notes.size()) + " notes)");
+            check (notes.size() > 20, "Note Spray : trop peu de notes (" + juce::String ((int) notes.size()) + ")");
+        }
+        {
+            // générateur : motif différent, gamme respectée, cadenas respecté
+            proc.noteSeq.lock[3] = true;
+            const int lockedNote = proc.noteSeq.note[3].load();
+            idg::Scale sc; sc.enabled = true; sc.key = 2; sc.type = 0;
+            for (int st = 0; st < NumGenStyles; ++st)
+            {
+                generatePattern (proc.noteSeq, 16, st, 0.6f, 2, 0.5f, 0.5f, sc, (uint32_t) (st * 77 + 1));
+                int ons = 0;
+                bool inScale = true;
+                for (int i = 0; i < 16; ++i)
+                {
+                    if (proc.noteSeq.on[i].load()) ++ons;
+                    if (i != 3) inScale &= sc.contains (((62 + proc.noteSeq.note[i].load()) % 12 + 12) % 12) || ! proc.noteSeq.on[i].load();
+                }
+                check (ons > 0, "generateur style " + juce::String (st) + " : motif vide");
+                check (inScale, "generateur style " + juce::String (st) + " : note hors gamme");
+            }
+            check (proc.noteSeq.note[3].load() == lockedNote, "generateur : le pas verrouille a change");
+            proc.noteSeq.lock[3] = false;
+        }
+        {
+            // mutation : le motif change au fil des cycles
+            PlaySettings ps; ps.mode = PlaySeq; ps.seqFollow = 1; ps.seqMutate = 1.0f;
+            const auto before = proc.noteSeq.toTree().getProperty ("steps").toString();
+            countNotes (proc, ps, [] (juce::MidiBuffer&, int) {}, 6.0);
+            check (proc.noteSeq.toTree().getProperty ("steps").toString() != before, "mutation : le motif n'a pas change");
+        }
+        {
+            // dans le synthé complet : arpège + micro-random + spray, pas de NaN, son présent
+            Harness h;
+            h.set ("play_mode", (float) PlayArp);
+            h.set ("mr_on", 1.0f); h.set ("mr_amount", 1.0f);
+            h.set ("spray_on", 1.0f);
+            h.set ("f1_on", 1.0f);
+            for (int n : { 48, 52, 55 }) h.noteOn (n, 0.8f);
+            h.run (2.0);
+            check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h) && h.peak() > 0.01f, "arpege + micro-random + spray : NaN, plafond ou silence");
+            // export MIDI
+            auto f = h.proc.exportMidi (2);
+            juce::MidiFile mf;
+            juce::FileInputStream is (f);
+            check (f.existsAsFile() && is.openedOk() && mf.readFrom (is) && mf.getNumTracks() == 1 && mf.getTrack (0)->getNumEvents() > 4,
+                   "export MIDI : fichier invalide");
+            f.deleteFile();
+            // état : pas du séquenceur restaurés
+            h.proc.noteSeq.note[5] = 11;
+            juce::MemoryBlock mb;
+            h.proc.getStateInformation (mb);
+            Harness b;
+            b.proc.setStateInformation (mb.getData(), (int) mb.getSize());
+            check (b.proc.noteSeq.note[5].load() == 11, "sequenceur de notes non restaure");
+        }
+    }
+
     std::cout << (failures == 0 ? "=== TOUS LES TESTS PASSENT ===" : "=== " + juce::String (failures).toStdString() + " ECHEC(S) ===") << std::endl;
     return failures == 0 ? 0 : 1;
 }

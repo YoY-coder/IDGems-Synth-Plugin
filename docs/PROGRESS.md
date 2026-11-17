@@ -48,3 +48,6 @@ un retour global. À chaque phase : compiler en local, tests de stabilité, comm
   analyses dans `SampleData` (SpectralData, FingerprintData, loadRaw), emplacements de sons 2-5 dans le
   processeur (AssetTex1/2, AssetFingerprint, AssetData), onglet `UI/TexturePage.*`. Osc A/B : modes
   Granulaire / Spectral (réglages fins partagés avec la Texture). Boucle Feed : phase 8.
+- Phase 6 : faite. `Source/Play/NoteGen.*` (couche MIDI avant le moteur : direct / arpège / séquenceur /
+  générateur, Note Spray, gamme ; `generatePattern`), micro-random dans `Voice::start` / `computeModulation`,
+  export MIDI `exportMidi`, onglet `UI/PlayPage.*`.

@@ -67,7 +67,18 @@ void Voice::start (int n, float vel, uint64_t a, const VoiceParams& p, idg::dsp:
     gTo = (float) n;
     gT = glide ? 0.0f : 1.0f;
 
-    for (int o = 0; o < NumOscs; ++o) osc[o].start (p.osc[o], n, rng);
+    // micro-random par voix : légères variations tirées à chaque note
+    const float mra = p.micro.on ? p.micro.amount : 0.0f;
+    mrPitch = p.micro.pitch ? rng.bi() * 0.35f * mra : 0.0f;
+    mrCut = p.micro.cutoff ? rng.bi() * mra : 0.0f;
+    mrPan = p.micro.pan ? rng.bi() * 0.5f * mra : 0.0f;
+    mrGrain = p.micro.grain ? rng.bi() * 0.15f * mra : 0.0f;
+    for (int o = 0; o < NumOscs; ++o)
+    {
+        OscParams op = p.osc[o];
+        if (p.micro.on && p.micro.phase) op.phaseRand = juce::jmin (1.0f, op.phaseRand + mra);
+        osc[o].start (op, n, rng);
+    }
     noise.reset (rng.next());
     texv.start (p.tex, n, rng);
     for (auto& f : fpf) f.reset();
@@ -132,6 +143,14 @@ void Voice::computeModulation (const VoiceParams& p)
 {
     local = p;
     for (auto& o : local.osc) o.tex = &local.tex;
+    if (p.micro.on)
+    {
+        for (auto& o : local.osc) { o.pitch += mrPitch; o.pan = juce::jlimit (-1.0f, 1.0f, o.pan + mrPan); o.pos = juce::jlimit (0.0f, 1.0f, o.pos + mrGrain); }
+        local.tex.pitch += mrPitch;
+        local.tex.pan = juce::jlimit (-1.0f, 1.0f, local.tex.pan + mrPan);
+        local.tex.gPos = juce::jlimit (0.0f, 1.0f, local.tex.gPos + mrGrain);
+        for (auto& f : local.filt) f.cutoff = juce::jlimit (20.0f, 20000.0f, f.cutoff * std::pow (2.0f, mrCut));
+    }
     const ModBlock* mb = p.mod;
     ageSec += (float) ControlRate / (float) sr;
     if (mb == nullptr || mb->numSlots == 0) return;
