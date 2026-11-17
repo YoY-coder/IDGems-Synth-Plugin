@@ -41,3 +41,6 @@ un retour global. À chaque phase : compiler en local, tests de stabilité, comm
   modulation par voix dans `Voice::computeModulation`, UI dans `Source/UI/ModUI.*` (pastilles, LFO, random,
   liste), potards modulables (Widgets.cpp), crayon wavetable (OscDisplay). Limite : LFO « stéréo » sans effet
   tant qu'il n'y a pas de cibles stéréo (bus FX, phase 4).
+- Phase 4 : faite. `Source/Fx/` = rack IDGems porté (registre par rack : préfixes busa_/busb_/busc_/mast_),
+  moteur de bus dans `PluginProcessor::processBlock` (tranches de 32 éch.), UI `Source/UI/FxPage.*`.
+  Mode sans latence activé par défaut (jeu en direct).

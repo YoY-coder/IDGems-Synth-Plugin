@@ -34,7 +34,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
         : proc (p),
           synth (p),
           macros (p),
-          fx ("FX // BUS A B C", { IDG_T ("Phase 4 : bus A / B / C + Master, envois, bus → bus,"), IDG_T ("rack d'effets IDGems complet dans chaque bus, chaîne de sortie complète.") }),
+          fx (p),
           mod (p),
           arp (IDG_T ("ARPÉ // SÉQUENCEUR"), { IDG_T ("Phase 6 : arpégiateur, séquenceur 32 pas, gammes, mutation,"), IDG_T ("export MIDI en glisser-déposer, Note Spray.") }),
           exp ("EXPORT", { IDG_T ("Phase 8 : enregistreur, rolling recorder, boucle Feed,"), IDG_T ("export WAV en glisser-déposer, batch render, Draft / HQ.") }),
@@ -186,7 +186,8 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
     juce::OwnedArray<juce::TextButton> tabs;
     SynthPage synth;
     MacroColumn macros;
-    ComingSoonPage fx, arp, exp;
+    FxPage fx;
+    ComingSoonPage arp, exp;
     ModListPage mod;
     std::vector<juce::Component*> pages;
     juce::TextButton panicBtn;

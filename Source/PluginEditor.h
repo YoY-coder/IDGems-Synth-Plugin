@@ -3,6 +3,7 @@
 #include "UI/LookAndFeel.h"
 #include "UI/SynthPage.h"
 #include "UI/PresetBrowser.h"
+#include "UI/FxPage.h"
 
 /** Interface d'IDGems Synth : barre du haut toujours visible, onglets façon Serum, clavier à l'écran.
     Redimensionnable : tout le contenu est dessiné à une taille de référence puis mis à l'échelle. */
@@ -16,6 +17,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void showTab (int index) { selectTab (index); }
 
     struct Content;
 

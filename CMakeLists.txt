@@ -65,7 +65,8 @@ set(IDGS_UI_SOURCES
     Source/UI/SynthPage.cpp
     Source/UI/PresetBrowser.cpp
     Source/UI/Graphs.cpp
-    Source/UI/ModUI.cpp)
+    Source/UI/ModUI.cpp
+    Source/UI/FxPage.cpp)
 
 # Police des titres (Michroma, licence SIL OFL : voir Resources/Fonts/OFL.txt)
 juce_add_binary_data(IDGemsSynthData SOURCES Resources/Fonts/Michroma-Regular.ttf)

@@ -94,6 +94,7 @@ int snapshotMain (const juce::String& path, int tab)
     if (tab == 2) { auto* p = proc.apvts.getParameter ("oscb_mode"); p->setValueNotifyingHost (p->convertTo0to1 (1.0f)); }
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
     ed->setSize (IDGemsSynthEditor::baseW, IDGemsSynthEditor::baseH);
+    if (tab >= 10) if (auto* e = dynamic_cast<IDGemsSynthEditor*> (ed.get())) e->showTab (tab - 10);
     auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
     juce::File f (path);
     f.deleteFile();
@@ -774,6 +775,100 @@ int main (int argc, char** argv)
             h.run (3.0);
             const double ratio = (juce::Time::getMillisecondCounterHiRes() - t0) / 3000.0;
             std::cout << "   charge avec modulations : " << juce::String (ratio * 100.0, 1) << " % du temps reel" << std::endl;
+        }
+    }
+
+    // ===================================================================== PHASE 4
+    // 22. Bus et effets : chaque effet sur chaque rack, envois, boucles, mute / solo, latence
+    {
+        std::cout << "22. Bus A/B/C + Master (chaque effet, envois, boucles, solo)..." << std::endl;
+        const auto& defs = idg::effectDefs();
+        for (int rk = 0; rk < idg::NumRacks; ++rk)
+        {
+            Harness h (48000.0, 256);
+            const auto& reg = idg::rackRegistry (rk);
+            // le rack Master reçoit tout ; pour les bus, on envoie les sources dans le bus testé
+            if (rk < NumBuses)
+                for (int s = 0; s < NumSendSources; ++s)
+                    for (int b = 0; b < NumBuses; ++b) h.set (sendId (s, b).toRawUTF8(), b == rk ? 1.0f : 0.0f);
+            h.set ("osca_table", 1); h.set ("osca_pos", 0.8f);
+            h.set (P::noiseOn, 1.0f);
+            for (int fx = 0; fx < idg::NumFx; ++fx)
+            {
+                h.set (reg.all[(size_t) reg.fxOn[fx]].id.toRawUTF8(), 1.0f);
+                for (int n : { 40, 52, 64 }) h.noteOn (n, 0.9f);
+                h.run (0.15);
+                for (int n : { 40, 52, 64 }) h.noteOff (n);
+                h.run (0.05);
+                const float pk = h.peak();
+                if (pk < 0.0f || pk > ceilingGain (h))
+                    check (false, idg::rackDisplayName (rk) + " / " + defs[(size_t) fx].name + " : NaN ou plafond depasse");
+                h.set (reg.all[(size_t) reg.fxOn[fx]].id.toRawUTF8(), 0.0f);
+            }
+            // tous les effets en même temps, séquenceurs actifs
+            for (int fx = 0; fx < idg::NumFx; ++fx)
+            {
+                h.set (reg.all[(size_t) reg.fxOn[fx]].id.toRawUTF8(), 1.0f);
+                h.proc.rack (rk).seq[fx].enabled = fx % 3 == 0;
+            }
+            for (int n : { 40, 52, 64 }) h.noteOn (n, 0.9f);
+            h.run (1.0);
+            check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h), idg::rackDisplayName (rk) + " : tous les effets -> NaN ou plafond");
+        }
+        {
+            // boucle A -> B -> C -> A : coupée, pas d'explosion ; sons dans B et C
+            Harness h;
+            h.set ("bus_a_to_b", 1.0f); h.set ("bus_b_to_c", 1.0f); h.set ("bus_c_to_a", 1.0f);
+            h.noteOn (48, 1.0f);
+            h.run (1.0);
+            check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h), "boucle de bus : NaN ou plafond");
+            check (h.proc.busEdgeBlocked[2][0].load(), "la boucle C -> A aurait du etre coupee");
+            check (! h.proc.busEdgeBlocked[0][1].load() && ! h.proc.busEdgeBlocked[1][2].load(), "envois A -> B -> C coupes a tort");
+        }
+        {
+            // solo du bus B alors que tout part dans A : silence
+            Harness h;
+            h.set ("bus_b_solo", 1.0f);
+            h.noteOn (48, 1.0f);
+            h.run (0.3);
+            check (h.peak (h.outL.size() - 4096) < 1.0e-4f, "solo du bus B : le bus A devrait etre muet");
+            h.set ("bus_b_solo", 0.0f);
+            h.set ("bus_a_mute", 1.0f);
+            h.set ("send_osca_c", 1.0f);
+            h.run (0.3);
+            check (h.peak (h.outL.size() - 4096) > 0.02f, "envoi vers C : pas de son alors que A est mute");
+        }
+        {
+            // mode avec latence : effets STFT actifs, latence annoncée cohérente
+            Harness h;
+            h.set (P::zeroLat, 0.0f);
+            const auto& reg = idg::rackRegistry (0);
+            h.set (reg.all[(size_t) reg.fxOn[idg::FxPitchShift]].id.toRawUTF8(), 1.0f);
+            h.noteOn (60);
+            h.run (0.5);
+            check (h.proc.getLatencySamples() > 0, "latence non annoncee en mode normal");
+            check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h), "pitch shift : NaN ou plafond");
+        }
+        {
+            // suiveur du bus A -> niveau de l'Osc B : pas de NaN ; état : ordre et séquenceur restaurés
+            Harness h;
+            h.proc.modShared.addConnection (MSrcFollow0, h.proc.paramIndex ("oscb_level"), 0.5f);
+            h.proc.modShared.addConnection (MSrcLfo0, h.proc.paramIndex (idg::rackRegistry (0).all[(size_t) idg::rackRegistry (0).fxMix[idg::FxFilter]].id), 0.5f);
+            h.set ("oscb_on", 1.0f);
+            h.noteOn (50);
+            h.run (0.5);
+            check (h.proc.followerValue[0].load() > 0.1f, "suiveur du bus A inactif");
+            auto order = h.proc.rack (1).shared.getOrder();
+            std::reverse (order.begin(), order.end());
+            h.proc.rack (1).shared.setOrder (order);
+            h.proc.rack (2).seq[5].enabled = true;
+            h.proc.rack (2).seq[5].length = 7;
+            juce::MemoryBlock mb;
+            h.proc.getStateInformation (mb);
+            Harness b;
+            b.proc.setStateInformation (mb.getData(), (int) mb.getSize());
+            check (b.proc.rack (1).shared.getOrder() == order, "ordre du rack non restaure");
+            check (b.proc.rack (2).seq[5].enabled.load() && b.proc.rack (2).seq[5].length.load() == 7, "sequenceur de module non restaure");
         }
     }
 
