@@ -193,6 +193,7 @@ private:
     LfoPanel lfo;
     SourcesPanel sources;
     VoicePanel voice;
+    juce::OwnedArray<DiceButton> dice;
 };
 
 /** Colonne des 8 macros (toujours visible, à gauche). */

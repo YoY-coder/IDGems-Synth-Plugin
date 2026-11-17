@@ -51,3 +51,14 @@ un retour global. À chaque phase : compiler en local, tests de stabilité, comm
 - Phase 6 : faite. `Source/Play/NoteGen.*` (couche MIDI avant le moteur : direct / arpège / séquenceur /
   générateur, Note Spray, gamme ; `generatePattern`), micro-random dans `Voice::start` / `computeModulation`,
   export MIDI `exportMidi`, onglet `UI/PlayPage.*`.
+- Phase 7 : faite. `Source/State/RandomEngine.*` (thread de l'interface) : classement de tous les paramètres
+  en sections / modules, plages par défaut sûres, cadenas (paramètre, module, rack, section), plages perso
+  (menu clic droit du potard, arc bleu), seed reproductible, historique (100, favoris, rappel sans recharger
+  les samples), synchro au temps / à la mesure, glide, mutate auto, 8 snapshots + morph pad (pondération
+  inverse de la distance), personnalités (7 intégrées + JSON dans Documents/IDGems Synth/Personnalites :
+  `{"name":..., "rules":[{"match":"f?_type","weights":[...]},{"match":"fam:4","prob":0.9},{"match":"env*_release","lo":0.5,"hi":0.9}]}`),
+  garde-fous (sonde = 2e processeur qui partage les tables / samples : rejette muet / saturé / NaN, 6 essais,
+  égalise le volume via le volume master). Drift audio : `ModGlobal` (champs des voix, dans les plages,
+  cadenas respectés) + `ParamBank::update` (effets) ; la macro CHAOS l'amplifie. UI `Source/UI/RandomUI.*`
+  (gros dé + dosage dans la barre du haut, clic droit = tirage précédent ; panneau « ... » ; dés par bloc,
+  par rack, par famille et par effet, clic droit = cadenas / random léger).

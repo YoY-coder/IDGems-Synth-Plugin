@@ -565,6 +565,18 @@ SynthPage::SynthPage (IDGemsSynthProcessor& p)
     : oscA (p, 0), oscB (p, 1), subNoise (p), f1 (p, 0), f2 (p, 1), envs (p), lfo (p), sources (p), voice (p)
 {
     addAll (*this, { &oscA, &oscB, &subNoise, &f1, &f2, &envs, &lfo, &sources, &voice });
+    // dés de random par bloc
+    using T = RandomEngine::Target;
+    auto mod = [] (juce::String m) { return [m] { T t; t.scope = RandomEngine::Scope::Module; t.module = m; return t; }; };
+    auto sec = [] (int s) { return [s] { T t; t.scope = RandomEngine::Scope::Section; t.section = s; return t; }; };
+    dice.add (new DiceButton (p, mod ("osca")))->attachTo (oscA);
+    dice.add (new DiceButton (p, mod ("oscb")))->attachTo (oscB);
+    dice.add (new DiceButton (p, mod ("sub")))->attachTo (subNoise, 32);
+    dice.add (new DiceButton (p, mod ("noise")))->attachTo (subNoise);
+    dice.add (new DiceButton (p, mod ("f1")))->attachTo (f1);
+    dice.add (new DiceButton (p, mod ("f2")))->attachTo (f2);
+    dice.add (new DiceButton (p, sec (SecEnv)))->attachTo (envs, 8, 4);
+    dice.add (new DiceButton (p, sec (SecMod)))->attachTo (sources);
 }
 
 void SynthPage::tick()

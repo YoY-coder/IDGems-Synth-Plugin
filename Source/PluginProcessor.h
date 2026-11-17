@@ -7,6 +7,7 @@
 #include "Fx/Rack.h"
 #include "Fx/Sequencer.h"
 #include "Play/NoteGen.h"
+#include "State/RandomEngine.h"
 
 /** Processeur principal d'IDGems Synth. */
 class IDGemsSynthProcessor : public juce::AudioProcessor, private juce::Timer
@@ -39,7 +40,17 @@ public:
 
     // ---- État complet (paramètres + tables personnalisées + samples)
     juce::ValueTree captureState();
-    void restoreState (const juce::ValueTree& state);
+    /** keepAssets : garde tables / samples actuels (historique du random, sonde des garde-fous). */
+    void restoreState (const juce::ValueTree& state, bool keepAssets = false);
+    /** Partage les tables / samples d'un autre processeur (sonde des garde-fous du random). */
+    void shareAssetsFrom (const IDGemsSynthProcessor& other);
+    /** Système de random (créé à la première demande, thread de l'interface). */
+    idgs::RandomEngine& randomEngine();
+    /** Position en temps (noires) : celle de l'hôte quand il joue, sinon une horloge interne. */
+    double getBeatPosition() const { return beatPos.load(); }
+    bool isHostRunning() const { return hostRunning.load(); }
+    /** Le bus reçoit-il au moins un envoi ? */
+    bool busIsUsed (int bus) const;
     void resetToInit();
 
     // ---- Paramètres (thread de l'interface)
@@ -178,6 +189,11 @@ private:
         std::atomic<float>* masterMix, *inGain, *outGain, *hpFreq, *monoOn, *monoFreq, *ottDepth, *ottTime, *ottUp, *ottDown, *ottGain,
             *clipDrive, *limRelease, *zeroLat, *destOS, *chaosMacro;
     } raw {};
+
+    std::atomic<double> beatPos { 0.0 };
+    std::atomic<bool> hostRunning { false };
+    double freeBeats = 0.0;
+    std::unique_ptr<idgs::RandomEngine> random; // en dernier : détruit en premier
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IDGemsSynthProcessor)
 };

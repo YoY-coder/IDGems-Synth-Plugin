@@ -6,6 +6,7 @@
 #include "UI/FxPage.h"
 #include "UI/TexturePage.h"
 #include "UI/PlayPage.h"
+#include "UI/RandomUI.h"
 
 /** Interface d'IDGems Synth : barre du haut toujours visible, onglets façon Serum, clavier à l'écran.
     Redimensionnable : tout le contenu est dessiné à une taille de référence puis mis à l'échelle. */
@@ -20,6 +21,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void showTab (int index) { selectTab (index); }
+    void showRandomPanel();
 
     struct Content;
 

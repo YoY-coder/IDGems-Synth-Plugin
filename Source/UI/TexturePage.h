@@ -74,6 +74,7 @@ private:
     Knob morph, level, pan, oct, semi, root;
     SoundSlot sound1, sound2, data, fpSlot;
     juce::OwnedArray<EnginePanel> engines;
+    std::unique_ptr<DiceButton> dice;
     ParamToggle fpOn, fpLoop;
     ParamCombo fpRes;
     Knob fpAmount, fpShift, fpSpeed;

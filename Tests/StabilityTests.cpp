@@ -33,6 +33,9 @@ struct Harness
         p->setValueNotifyingHost (p->convertTo0to1 (realValue));
     }
 
+    /** Repart de zéro (voix, effets) après un changement de patch. */
+    void prepareFresh() { proc.prepareToPlay (sr, block); outL.clear(); outR.clear(); }
+
     void noteOn (int note, float vel = 0.8f, int offset = 0) { midi.addEvent (juce::MidiMessage::noteOn (1, note, vel), offset); }
     void noteOff (int note, int offset = 0) { midi.addEvent (juce::MidiMessage::noteOff (1, note), offset); }
 
@@ -94,7 +97,15 @@ int snapshotMain (const juce::String& path, int tab)
     if (tab == 2) { auto* p = proc.apvts.getParameter ("oscb_mode"); p->setValueNotifyingHost (p->convertTo0to1 (1.0f)); }
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
     ed->setSize (IDGemsSynthEditor::baseW, IDGemsSynthEditor::baseH);
-    if (tab >= 10) if (auto* e = dynamic_cast<IDGemsSynthEditor*> (ed.get())) e->showTab (tab - 10);
+    if (tab >= 10 && tab < 20) if (auto* e = dynamic_cast<IDGemsSynthEditor*> (ed.get())) e->showTab (tab - 10);
+    if (tab == 20)
+        if (auto* e = dynamic_cast<IDGemsSynthEditor*> (ed.get()))
+        {
+            auto& re = proc.randomEngine();
+            for (int k = 0; k < 4; ++k) { re.perform ({}, (uint32_t) (k + 3), 0.6f, false, k == 2 ? "Filtres" : IDG_T ("Général")); re.storeSnapshot (k, 0.2f + 0.2f * k, 0.3f + 0.1f * (k % 2)); }
+            re.toggleFavourite (2);
+            e->showRandomPanel();
+        }
     auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
     juce::File f (path);
     f.deleteFile();
@@ -109,8 +120,11 @@ int main (int argc, char** argv)
     if (argc >= 3 && juce::String (argv[1]) == "--snapshot")
         return snapshotMain (argv[2], argc >= 4 ? juce::String (argv[3]).getIntValue() : 0);
     std::cout << "=== Tests de stabilite IDGems Synth ===" << std::endl;
+    // --only N : ne lance que le test N
+    const int onlyTest = argc >= 3 && juce::String (argv[1]) == "--only" ? juce::String (argv[2]).getIntValue() : 0;
 
     // 1. Wavetables : pas de NaN, crête normalisée, pas d'harmonique au-dessus de Nyquist à la note la plus aiguë
+    if (onlyTest == 0 || onlyTest == 1)
     {
         std::cout << "1. Wavetables d'usine..." << std::endl;
         const auto& bank = WavetableBank::get();
@@ -133,6 +147,7 @@ int main (int argc, char** argv)
     }
 
     // 2. Notes simples à plusieurs fréquences d'échantillonnage / tailles de bloc
+    if (onlyTest == 0 || onlyTest == 2)
     {
         std::cout << "2. Notes simples (44.1 / 48 / 96 kHz, blocs 1 a 2048)..." << std::endl;
         for (double sr : { 44100.0, 48000.0, 96000.0 })
@@ -153,6 +168,7 @@ int main (int argc, char** argv)
     }
 
     // 3. Fin des voix : après le release, silence total et plus aucune voix active
+    if (onlyTest == 0 || onlyTest == 3)
     {
         std::cout << "3. Fin des voix apres release..." << std::endl;
         Harness h;
@@ -167,6 +183,7 @@ int main (int argc, char** argv)
     }
 
     // 4. Clics : attaque / release à 0 ms, vol de voix, réduction du nombre de voix, automation brutale
+    if (onlyTest == 0 || onlyTest == 4)
     {
         std::cout << "4. Absence de clics (sinus 110 Hz)..." << std::endl;
         // pente max d'un sinus 110 Hz à pleine échelle ~ 2*pi*110/48000 = 0.0144 ; un clic dépasse largement
@@ -234,6 +251,7 @@ int main (int argc, char** argv)
     }
 
     // 5. Panic : silence en moins de 15 ms, sans clic, et le synthé rejoue ensuite
+    if (onlyTest == 0 || onlyTest == 5)
     {
         std::cout << "5. Panic..." << std::endl;
         Harness h;
@@ -256,6 +274,7 @@ int main (int argc, char** argv)
     }
 
     // 6. Sustain (CC64) et pitch bend
+    if (onlyTest == 0 || onlyTest == 6)
     {
         std::cout << "6. Pedale de sustain et pitch bend..." << std::endl;
         Harness h;
@@ -276,6 +295,7 @@ int main (int argc, char** argv)
     }
 
     // 7. Sauvegarde / rappel de l'état
+    if (onlyTest == 0 || onlyTest == 7)
     {
         std::cout << "7. Sauvegarde et rappel de l'etat..." << std::endl;
         Harness a;
@@ -292,6 +312,7 @@ int main (int argc, char** argv)
     }
 
     // 8. Paramètres extrêmes au hasard (fuzz)
+    if (onlyTest == 0 || onlyTest == 8)
     {
         std::cout << "8. Parametres au hasard (fuzz)..." << std::endl;
         Harness h (44100.0, 256);
@@ -312,6 +333,7 @@ int main (int argc, char** argv)
     }
 
     // 9. Interface : création / redimensionnement / destruction
+    if (onlyTest == 0 || onlyTest == 9)
     {
         std::cout << "9. Interface (creation, redimensionnement)..." << std::endl;
         Harness h;
@@ -324,6 +346,7 @@ int main (int argc, char** argv)
     }
 
     // 10. CPU : 32 voix tenues, unison absent (phase 1), 10 s de son à 48 kHz
+    if (onlyTest == 0 || onlyTest == 10)
     {
         std::cout << "10. CPU (32 voix, 10 s a 48 kHz)..." << std::endl;
         Harness h (48000.0, 256);
@@ -342,6 +365,7 @@ int main (int argc, char** argv)
 
     // ===================================================================== PHASE 2
     // 11. Warps : chaque mode, avec Osc B comme source de modulation
+    if (onlyTest == 0 || onlyTest == 11)
     {
         std::cout << "11. Warps (chaque mode, source Osc B)..." << std::endl;
         for (int w = 1; w < NumWarpModes; ++w)
@@ -364,6 +388,7 @@ int main (int argc, char** argv)
     }
 
     // 12. Filtres : chaque type, résonance et drive au maximum
+    if (onlyTest == 0 || onlyTest == 12)
     {
         std::cout << "12. Filtres (chaque type, resonance et drive max)..." << std::endl;
         for (int t = 0; t < NumFilterTypes; ++t)
@@ -408,6 +433,7 @@ int main (int argc, char** argv)
     }
 
     // 13. Sub et bruits
+    if (onlyTest == 0 || onlyTest == 13)
     {
         std::cout << "13. Sub et banque de bruits..." << std::endl;
         for (int t = 0; t < NumNoiseTypes; ++t)
@@ -441,6 +467,7 @@ int main (int argc, char** argv)
     }
 
     // 14. Modes de jeu : mono, legato, glide, sans clic
+    if (onlyTest == 0 || onlyTest == 14)
     {
         std::cout << "14. Mono / legato / glide..." << std::endl;
         for (int mode : { VoiceMono, VoiceLegato })
@@ -483,6 +510,7 @@ int main (int argc, char** argv)
     }
 
     // 15. Unison et inharmonicité : changements en cours de note sans clic, sans NaN
+    if (onlyTest == 0 || onlyTest == 15)
     {
         std::cout << "15. Unison et inharmonicite..." << std::endl;
         Harness h;
@@ -504,6 +532,7 @@ int main (int argc, char** argv)
     }
 
     // 16. Samples : chargement, note d'origine dans le nom, boucle, multisample, sample -> wavetable
+    if (onlyTest == 0 || onlyTest == 16)
     {
         std::cout << "16. Samples (Sample, Multisample, sample -> wavetable)..." << std::endl;
         auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("idgs_tests");
@@ -586,6 +615,7 @@ int main (int argc, char** argv)
     }
 
     // 17. Bouton dé : 20 wavetables aléatoires, balayées sur toute la position
+    if (onlyTest == 0 || onlyTest == 17)
     {
         std::cout << "17. Wavetables aleatoires (de)..." << std::endl;
         Harness h;
@@ -603,6 +633,7 @@ int main (int argc, char** argv)
     }
 
     // 18. Presets d'usine : chacun joue, sans NaN ni dépassement ; sauvegarde / rechargement d'un preset
+    if (onlyTest == 0 || onlyTest == 18)
     {
         std::cout << "18. Presets d'usine et sauvegarde..." << std::endl;
         Harness h;
@@ -637,6 +668,7 @@ int main (int argc, char** argv)
     }
 
     // 19. CPU au pire cas : 32 voix, 2 oscs en unison 16, additif, 2 filtres, sub, bruit
+    if (onlyTest == 0 || onlyTest == 19)
     {
         std::cout << "19. CPU au pire cas (32 voix x 2 oscs x unison 16 + additif + 2 filtres)..." << std::endl;
         Harness h (48000.0, 256);
@@ -662,6 +694,7 @@ int main (int argc, char** argv)
     }
 
     // 20. CPU d'un patch courant : 16 voix, Osc A unison 7 + Osc B, filtre LP24
+    if (onlyTest == 0 || onlyTest == 20)
     {
         std::cout << "20. CPU d'un patch courant (16 voix, unison 7, filtre)..." << std::endl;
         Harness h (48000.0, 256);
@@ -678,6 +711,7 @@ int main (int argc, char** argv)
 
     // ===================================================================== PHASE 3
     // 21. Modulation : connexions, effet sur le son, sauvegarde
+    if (onlyTest == 0 || onlyTest == 21)
     {
         std::cout << "21. Modulation (macros, LFO, enveloppes, sauvegarde)..." << std::endl;
         auto rmsOf = [] (Harness& h, size_t from)
@@ -780,6 +814,7 @@ int main (int argc, char** argv)
 
     // ===================================================================== PHASE 4
     // 22. Bus et effets : chaque effet sur chaque rack, envois, boucles, mute / solo, latence
+    if (onlyTest == 0 || onlyTest == 22)
     {
         std::cout << "22. Bus A/B/C + Master (chaque effet, envois, boucles, solo)..." << std::endl;
         const auto& defs = idg::effectDefs();
@@ -874,6 +909,7 @@ int main (int argc, char** argv)
 
     // ===================================================================== PHASE 5
     // 23. Osc Texture : chaque moteur, morph, empreinte, modes granulaire / spectral des Osc A / B
+    if (onlyTest == 0 || onlyTest == 23)
     {
         std::cout << "23. Osc Texture (6 moteurs, morph, empreinte, modes granulaire / spectral)..." << std::endl;
         auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("idgs_tex");
@@ -967,6 +1003,7 @@ int main (int argc, char** argv)
 
     // ===================================================================== PHASE 6
     // 24. Jeu : arpège, séquenceur, générateur, gamme, Note Spray, micro-random, export MIDI
+    if (onlyTest == 0 || onlyTest == 24)
     {
         std::cout << "24. Arpege / sequenceur / generateur / gamme / spray / micro-random / export MIDI..." << std::endl;
         auto countNotes = [] (IDGemsSynthProcessor& proc, PlaySettings ps, std::function<void (juce::MidiBuffer&, int)> feed, double secs, std::vector<int>* notes = nullptr)
@@ -1065,6 +1102,142 @@ int main (int argc, char** argv)
             Harness b;
             b.proc.setStateInformation (mb.getData(), (int) mb.getSize());
             check (b.proc.noteSeq.note[5].load() == 11, "sequenceur de notes non restaure");
+        }
+    }
+
+
+    // 25. Système de random : seed reproductible, cadenas, plages, garde-fous, historique, morph, drift, état
+    if (onlyTest == 0 || onlyTest == 25)
+    {
+        std::cout << "25. Random (seed, cadenas, plages, garde-fous, historique, morph, drift)..." << std::endl;
+        using RT = RandomEngine::Target;
+        auto norm = [] (IDGemsSynthProcessor& p, const char* id) { return p.apvts.getParameter (id)->getValue(); };
+        {
+            // même seed => même patch
+            Harness a, b;
+            a.proc.randomEngine().perform (RT {}, 4242, 1.0f, false, "t");
+            b.proc.randomEngine().perform (RT {}, 4242, 1.0f, false, "t");
+            int diff = 0;
+            for (int i = 0; i < a.proc.getParameters().size(); ++i)
+                if (std::abs (a.proc.getParameters()[i]->getValue() - b.proc.getParameters()[i]->getValue()) > 1.0e-5f) ++diff;
+            check (diff == 0, "random : meme seed, patchs differents (" + juce::String (diff) + " parametres)");
+        }
+        {
+            Harness h;
+            auto& re = h.proc.randomEngine();
+            const int iCut = h.proc.paramIndex ("f1_cutoff"), iPos = h.proc.paramIndex ("osca_pos");
+            re.setLocked (iCut, true);
+            re.setRange (iPos, 0.2f, 0.3f);
+            re.setSectionLocked (SecEnv, true);
+            const float cut0 = norm (h.proc, "f1_cutoff"), att0 = norm (h.proc, "env2_attack");
+            bool cutOk = true, posOk = true, envOk = true, changed = false;
+            const float det0 = norm (h.proc, "osca_detune");
+            for (int k = 0; k < 20; ++k)
+            {
+                re.perform (RT {}, (uint32_t) (k + 1), 1.0f, false, "t");
+                cutOk &= std::abs (norm (h.proc, "f1_cutoff") - cut0) < 1.0e-6f;
+                const float p = norm (h.proc, "osca_pos");
+                posOk &= p >= 0.2f - 1.0e-4f && p <= 0.3f + 1.0e-4f;
+                envOk &= std::abs (norm (h.proc, "env2_attack") - att0) < 1.0e-6f;
+                changed |= std::abs (norm (h.proc, "osca_detune") - det0) > 1.0e-3f;
+            }
+            check (cutOk, "random : parametre verrouille modifie");
+            check (posOk, "random : plage de random non respectee");
+            check (envOk, "random : section verrouillee modifiee");
+            check (changed, "random : rien ne change");
+            // dosage 0 : rien ne bouge (paramètres continus)
+            const float det1 = norm (h.proc, "osca_detune");
+            re.perform (RT {}, 99, 0.0f, false, "t");
+            check (std::abs (norm (h.proc, "osca_detune") - det1) < 1.0e-6f, "random : dosage 0 a modifie un parametre");
+            // portée : un module seulement
+            RT t; t.scope = RandomEngine::Scope::Module; t.module = "oscb";
+            const float res0 = norm (h.proc, "f1_reso");
+            re.perform (t, 7, 1.0f, false, "t");
+            check (std::abs (norm (h.proc, "f1_reso") - res0) < 1.0e-6f, "random module Osc B : le filtre a change");
+            // historique et rappel
+            const int n = (int) re.getHistory().size();
+            check (n >= 22, "random : historique incomplet (" + juce::String (n) + ")");
+            const float detH = h.proc.apvts.getParameter ("osca_detune")->getValue();
+            re.perform (RT {}, 1234, 1.0f, false, "t");
+            re.recall (n - 1);
+            check (std::abs (norm (h.proc, "osca_detune") - detH) < 1.0e-5f, "random : rappel de l'historique incorrect");
+            // état : cadenas et plages sauvés avec le projet
+            juce::MemoryBlock mb;
+            h.proc.getStateInformation (mb);
+            Harness c;
+            c.proc.setStateInformation (mb.getData(), (int) mb.getSize());
+            auto& rc = c.proc.randomEngine();
+            check (rc.isLocked (iCut) && rc.hasCustomRange (iPos) && rc.sectionLocked[SecEnv], "random : cadenas / plages non restaures");
+        }
+        {
+            // garde-fous : aucun tirage muet, saturé ou NaN
+            int silent = 0, bad = 0;
+            double worstMs = 0.0;
+            for (int k = 0; k < 12; ++k)
+            {
+                Harness h;
+                const double t0 = juce::Time::getMillisecondCounterHiRes();
+                h.proc.randomEngine().perform (RT {}, (uint32_t) (k * 31 + 5), 1.0f, true, "t");
+                worstMs = juce::jmax (worstMs, juce::Time::getMillisecondCounterHiRes() - t0);
+                h.prepareFresh();
+                for (int note : { 48, 60, 64, 67 }) h.noteOn (note, 0.8f);
+                h.run (1.0);
+                const float pk = h.peak();
+                if (pk < 0.0f || pk > ceilingGain (h)) ++bad;
+                else if (pk < 0.003f) ++silent;
+            }
+            check (bad == 0, "garde-fous : NaN ou plafond depasse (" + juce::String (bad) + ")");
+            check (silent <= 1, "garde-fous : tirages muets (" + juce::String (silent) + "/12)");
+            std::cout << "    tirage avec garde-fous : " << juce::String (worstMs, 0) << " ms (pire cas)" << std::endl;
+            check (worstMs < 8000.0, "garde-fous trop lents");
+        }
+        {
+            // personnalités : chaque personnalité produit un patch sain
+            for (int pers = 0; pers < personalityNames().size(); ++pers)
+            {
+                Harness h;
+                h.set ("rand_personality", (float) pers);
+                h.set ("rand_intensity", 1.0f);
+                h.proc.randomEngine().perform (RT {}, (uint32_t) (pers + 11), 1.0f, false, "t");
+                h.prepareFresh();
+                for (int note : { 48, 60, 64 }) h.noteOn (note, 0.8f);
+                h.run (0.8);
+                const float pk = h.peak();
+                check (pk >= 0.0f && pk <= ceilingGain (h), "personnalite " + personalityNames()[pers] + " : NaN ou plafond");
+            }
+        }
+        {
+            // morph pad : mélange de deux snapshots
+            Harness h;
+            auto& re = h.proc.randomEngine();
+            h.set ("osca_pos", 0.0f);
+            re.storeSnapshot (0, 0.0f, 0.0f);
+            h.set ("osca_pos", 1.0f);
+            re.storeSnapshot (1, 1.0f, 1.0f);
+            h.set ("morph_x", 0.5f); h.set ("morph_y", 0.5f);
+            re.applyMorph (true);
+            check (std::abs (norm (h.proc, "osca_pos") - 0.5f) < 0.02f, "morph : milieu incorrect (" + juce::String (norm (h.proc, "osca_pos")) + ")");
+            h.set ("morph_x", 0.0f); h.set ("morph_y", 0.0f);
+            re.applyMorph (true);
+            check (norm (h.proc, "osca_pos") < 0.02f, "morph : coin incorrect");
+        }
+        {
+            // drift : la position de wavetable dérive (affichage modulé), sans NaN
+            Harness h;
+            (void) h.proc.randomEngine();
+            h.set ("rand_drift", 1.0f);
+            h.set ("rand_drift_speed", 2.0f);
+            h.set ("osca_pos", 0.5f);
+            h.noteOn (60, 0.8f);
+            float mn = 1.0f, mx = 0.0f;
+            for (int k = 0; k < 20; ++k)
+            {
+                h.run (0.1);
+                const float v = h.proc.modShared.fieldValue01[FOscPos].load();
+                if (v >= 0.0f) { mn = juce::jmin (mn, v); mx = juce::jmax (mx, v); }
+            }
+            check (mx - mn > 0.02f, "drift : aucune derive (" + juce::String (mx - mn) + ")");
+            check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h), "drift : NaN ou plafond");
         }
     }
 

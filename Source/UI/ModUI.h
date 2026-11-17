@@ -1,5 +1,6 @@
 #pragma once
 #include "Graphs.h"
+#include "RandomUI.h"
 
 namespace idgs::ui
 {

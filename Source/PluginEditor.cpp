@@ -44,8 +44,13 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
           meter (p),
           scope (p),
           keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard),
-          browser (p)
+          browser (p),
+          randomCluster (p),
+          randomPanel (p)
     {
+        randomCluster.openPanel = [this] { randomPanel.open(); };
+        randomPanel.flash = [this] (const juce::String& m) { flash (m); };
+        addAndMakeVisible (randomCluster);
         // ---- barre de presets
         prevBtn.setTooltip (IDG_T ("Preset précédent"));
         nextBtn.setTooltip (IDG_T ("Preset suivant"));
@@ -60,6 +65,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
         browser.flash = [this] (const juce::String& m) { flash (m); };
         addAndMakeVisible (macros);
         addChildComponent (browser);
+        addChildComponent (randomPanel);
         refreshPresetName();
 
         const juce::StringArray names { "SYNTH", "TEXTURE", "FX", "MODULATION", IDG_T ("ARPÉ / SÉQ"), "EXPORT" };
@@ -165,8 +171,10 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
         top.removeFromRight (8);
         scope.setBounds (top.removeFromRight (120).reduced (0, 7));
         top.removeFromRight (8);
-        // presets : centrés dans l'espace restant
-        auto pr = top.withSizeKeepingCentre (juce::jmin (top.getWidth(), 330), 28);
+        // random (dé, dosage, panneau) puis presets centrés dans l'espace restant
+        randomCluster.setBounds (top.removeFromRight (124));
+        top.removeFromRight (6);
+        auto pr = top.withSizeKeepingCentre (juce::jmin (top.getWidth(), 300), 28);
         prevBtn.setBounds (pr.removeFromLeft (26));
         pr.removeFromLeft (3);
         saveBtn.setBounds (pr.removeFromRight (64));
@@ -180,6 +188,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
         macros.setBounds (r.removeFromLeft (92).reduced (6, 6).withTrimmedRight (-4));
         for (auto* pg : pages) pg->setBounds (r);
         browser.setBounds (getLocalBounds());
+        randomPanel.setBounds (getLocalBounds());
     }
 
     static constexpr int topH = 58;
@@ -200,6 +209,8 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
     juce::MidiKeyboardComponent keyboard;
     juce::TextButton prevBtn { "<" }, nextBtn { ">" }, presetName { "Init" }, saveBtn { "SAUVER" };
     PresetBrowser browser;
+    RandomCluster randomCluster;
+    RandomPanel randomPanel;
     juce::String flashText;
     juce::uint32 flashTime = 0;
     juce::Rectangle<int> flashArea;
@@ -242,6 +253,8 @@ IDGemsSynthEditor::~IDGemsSynthEditor()
     content.reset();
     setLookAndFeel (nullptr);
 }
+
+void IDGemsSynthEditor::showRandomPanel() { content->randomPanel.open(); }
 
 void IDGemsSynthEditor::paint (juce::Graphics& g) { g.fillAll (Theme::bg); }
 

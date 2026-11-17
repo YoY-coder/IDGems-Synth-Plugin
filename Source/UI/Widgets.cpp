@@ -27,7 +27,7 @@ Knob::Knob (IDGemsSynthProcessor& p, const juce::String& paramId, const juce::St
     att = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (p.apvts, paramId, *this);
     if (param != nullptr)
         setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
-    if (field >= 0) startTimerHz (20);
+    startTimerHz (field >= 0 ? 20 : 5);
 }
 
 juce::String Knob::getTooltip()
@@ -58,9 +58,10 @@ void Knob::tick()
 {
     const float m = field >= 0 ? proc.modDisplay01 (paramIdx) : -1.0f;
     const int ver = proc.modShared.version.load(), hs = proc.uiHoverSource.load(), ds = proc.uiDragSource.load();
-    if (std::abs (m - lastMod) > 0.002f || ver != lastVersion || hs != lastHoverSrc || ds != lastDragSrc)
+    const int rv = proc.randomEngine().version.load();
+    if (std::abs (m - lastMod) > 0.002f || ver != lastVersion || hs != lastHoverSrc || ds != lastDragSrc || rv != lastRandVersion)
     {
-        lastMod = m; lastVersion = ver; lastHoverSrc = hs; lastDragSrc = ds;
+        lastMod = m; lastVersion = ver; lastHoverSrc = hs; lastDragSrc = ds; lastRandVersion = rv;
         repaint();
     }
 }
@@ -129,11 +130,27 @@ void Knob::itemDropped (const SourceDetails& d)
 
 void Knob::showModMenu()
 {
-    if (field < 0) return;
+    auto& re = proc.randomEngine();
     juce::PopupMenu m;
-    m.addSectionHeader (IDG_T ("Modulations de « ") + label + IDG_T (" »"));
+    if (re.isRandomizable (paramIdx))
+    {
+        m.addSectionHeader ("Random");
+        m.addItem (8000, IDG_T ("Cadenas : le random ne touche plus ce réglage"), true, re.isLocked (paramIdx));
+        juce::PopupMenu rg;
+        rg.addItem (8001, IDG_T ("Autour de la valeur actuelle (±10 %)"));
+        rg.addItem (8002, IDG_T ("Autour de la valeur actuelle (±25 %)"));
+        rg.addItem (8003, IDG_T ("Minimum = valeur actuelle"));
+        rg.addItem (8004, IDG_T ("Maximum = valeur actuelle"));
+        rg.addSeparator();
+        rg.addItem (8005, IDG_T ("Plage par défaut"), re.hasCustomRange (paramIdx));
+        const auto r = re.getRange (paramIdx);
+        m.addSubMenu ("Plage de random : " + juce::String (juce::roundToInt (r.getStart() * 100.0f)) + " - "
+                      + juce::String (juce::roundToInt (r.getEnd() * 100.0f)) + " %", rg);
+    }
+    if (field < 0 && m.getNumItems() == 0) return;
+    if (field >= 0) m.addSectionHeader (IDG_T ("Modulations de « ") + label + IDG_T (" »"));
     int count = 0;
-    for (int i = 0; i < MaxModSlots; ++i)
+    for (int i = 0; i < (field >= 0 ? MaxModSlots : 0); ++i)
     {
         auto& sl = proc.modShared.slots[i];
         if (sl.src.load() < 0 || sl.param.load() != paramIdx) continue;
@@ -144,12 +161,30 @@ void Knob::showModMenu()
         sub.addItem (3000 + i, "Supprimer");
         m.addSubMenu (sourceName (sl.src.load()) + "  " + juce::String (juce::roundToInt (sl.depth.load() * 100.0f)) + " %", sub);
     }
-    if (count == 0) m.addItem (-1, IDG_T ("Aucune : glisse une source (macro, LFO, enveloppe...) sur ce potard"), false);
-    else { m.addSeparator(); m.addItem (9999, IDG_T ("Supprimer toutes les modulations")); }
+    if (field >= 0 && count == 0) m.addItem (-1, IDG_T ("Aucune : glisse une source (macro, LFO, enveloppe...) sur ce potard"), false);
+    else if (count > 0) { m.addSeparator(); m.addItem (9999, IDG_T ("Supprimer toutes les modulations")); }
     juce::Component::SafePointer<Knob> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe] (int r)
     {
         if (safe == nullptr || r <= 0) return;
+        if (r >= 8000 && r <= 8005)
+        {
+            auto& rnd = safe->proc.randomEngine();
+            const int i = safe->paramIdx;
+            const float v = safe->param->getValue();
+            const auto cur = rnd.getRange (i);
+            switch (r)
+            {
+                case 8000: rnd.setLocked (i, ! rnd.isLocked (i)); break;
+                case 8001: rnd.setRange (i, v - 0.1f, v + 0.1f); break;
+                case 8002: rnd.setRange (i, v - 0.25f, v + 0.25f); break;
+                case 8003: rnd.setRange (i, v, juce::jmax (v, cur.getEnd())); break;
+                case 8004: rnd.setRange (i, juce::jmin (v, cur.getStart()), v); break;
+                default: rnd.resetRange (i); break;
+            }
+            safe->repaint();
+            return;
+        }
         auto& ms = safe->proc.modShared;
         if (r == 9999) { for (int i = 0; i < MaxModSlots; ++i) if (ms.slots[i].param.load() == safe->paramIdx) ms.removeConnection (i); }
         else if (r >= 3000) ms.removeConnection (r - 3000);
@@ -188,6 +223,20 @@ void Knob::paint (juce::Graphics& g)
 
     // rail éteint
     arc (ringR, startAngle, endAngle, Theme::line.withAlpha (0.9f * alpha), 2.0f);
+    // plage de random personnalisée : arc bleu extérieur ; cadenas
+    auto& rnd = proc.randomEngine();
+    if (rnd.hasCustomRange (paramIdx))
+    {
+        const auto rr = rnd.getRange (paramIdx);
+        arc (radius + 0.5f, angleOf (rr.getStart()), angleOf (juce::jmax (rr.getEnd(), rr.getStart() + 0.01f)), juce::Colour (0xff3d9bff).withAlpha (0.9f * alpha), 1.6f);
+    }
+    if (rnd.isLocked (paramIdx))
+    {
+        auto lk = juce::Rectangle<float> (7.0f, 8.0f).withPosition (dial.getRight() - 6.0f, dial.getY() - 1.0f);
+        g.setColour (juce::Colour (0xffffc040).withAlpha (alpha));
+        g.fillRoundedRectangle (lk.withTrimmedTop (3.5f), 1.0f);
+        g.drawRoundedRectangle (lk.withTrimmedBottom (3.0f).reduced (1.2f, 0.0f), 1.5f, 1.1f);
+    }
     // tube néon : plus la valeur est forte, plus il bloome
     {
         const float amount = bipolar ? std::abs (norm - zeroN) / juce::jmax (zeroN, 1.0f - zeroN) : norm;

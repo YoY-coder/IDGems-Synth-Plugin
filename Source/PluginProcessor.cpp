@@ -291,7 +291,7 @@ void IDGemsSynthProcessor::applyGlobalModulation()
         }
         p.modActive = true;
     }
-    for (auto& br : racks) br->bank.update (scale, 0.0f, 0.0, br->rack.activeFlags());
+    for (auto& br : racks) br->bank.update (scale, modGlobal.driftNow, modGlobal.driftTime, br->rack.activeFlags());
 }
 
 void IDGemsSynthProcessor::computeBusOrder (int order[NumBuses], bool edgeOk[NumBuses][NumBuses])
@@ -383,6 +383,9 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         }
     uiBpm.store (bpm);
     const double beatsPerSample = bpm / 60.0 / sr;
+    freeBeats = playing ? ppqNow : freeBeats + (double) n * beatsPerSample;
+    beatPos.store (freeBeats);
+    hostRunning.store (playing);
 
     // couche de jeu : arpège / séquenceur / générateur / Note Spray / gamme
     noteGen.process (midi, genMidi, n, ppqNow, bpm, playing, ps, noteSeq, audioRng);
@@ -401,7 +404,7 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     for (int b = 0; b < NumBuses; ++b) fol[b] = follow[b];
     modGlobal.process (*modBlock, n, bpm, ppqNow, playing, engine.takeNoteOns(), engine.getModWheel(), engine.getAftertouch(),
                        0.5f + 0.5f * engine.getBend(), fol);
-    vp.mod = modBlock->numSlots > 0 ? modBlock.get() : nullptr;
+    vp.mod = modBlock->numSlots > 0 || modGlobal.driftNow > 0.0001f ? modBlock.get() : nullptr;
     applyGlobalModulation();
 
     if (panicFlag.exchange (false))
@@ -915,7 +918,37 @@ juce::ValueTree IDGemsSynthProcessor::captureState()
     return state;
 }
 
-void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
+bool IDGemsSynthProcessor::busIsUsed (int bus) const
+{
+    for (int src = 0; src < NumSendSources; ++src)
+        if (raw.send[src][bus]->load() > 0.0f) return true;
+    for (int b = 0; b < NumBuses; ++b)
+        if (b != bus && raw.busSend[b][bus] != nullptr && raw.busSend[b][bus]->load() > 0.0f) return true;
+    return false;
+}
+
+idgs::RandomEngine& IDGemsSynthProcessor::randomEngine()
+{
+    if (random == nullptr) random = std::make_unique<idgs::RandomEngine> (*this);
+    return *random;
+}
+
+void IDGemsSynthProcessor::shareAssetsFrom (const IDGemsSynthProcessor& o)
+{
+    for (int k = 0; k < NumAssetSlots; ++k)
+    {
+        auto& a = assets[k];
+        const auto& b = o.assets[k];
+        a.tableOwner = b.tableOwner;
+        a.table.store (b.table.load());
+        a.samplesOwner = b.samplesOwner;
+        a.samples.store (b.samples.load());
+        a.files = b.files;
+    }
+    ++assetsVersion;
+}
+
+void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree, bool keepAssets)
 {
     if (! tree.hasType (apvts.state.getType())) return;
     auto copy = tree.createCopy();
@@ -967,7 +1000,9 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             if (! copy.getChildWithProperty ("id", rp->getParameterID()).isValid())
                 rp->setValueNotifyingHost (rp->getDefaultValue());
+    copy.removeChild (copy.getChildWithName ("RANDOM"), nullptr);
     apvts.replaceState (copy);
+    if (keepAssets) return;
 
     for (int o = NumOscs; o < NumAssetSlots; ++o)
     {
@@ -1044,7 +1079,9 @@ void IDGemsSynthProcessor::resetToInit()
 
 void IDGemsSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = captureState().createXml()) copyXmlToBinary (*xml, destData);
+    auto state = captureState();
+    if (random != nullptr) state.appendChild (random->toTree(), nullptr);
+    if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
 void IDGemsSynthProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -1053,6 +1090,7 @@ void IDGemsSynthProcessor::setStateInformation (const void* data, int sizeInByte
     {
         auto tree = juce::ValueTree::fromXml (*xml);
         restoreState (tree);
+        if (auto rt = tree.getChildWithName ("RANDOM"); rt.isValid() || random != nullptr) randomEngine().fromTree (rt);
         if (presets != nullptr && tree.hasProperty ("presetName")) presets->setCurrentName (tree.getProperty ("presetName").toString());
     }
 }

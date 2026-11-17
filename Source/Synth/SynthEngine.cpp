@@ -153,7 +153,7 @@ void Voice::computeModulation (const VoiceParams& p)
     }
     const ModBlock* mb = p.mod;
     ageSec += (float) ControlRate / (float) sr;
-    if (mb == nullptr || mb->numSlots == 0) return;
+    if (mb == nullptr) return;
 
     // ---- sources propres à la voix
     for (int e = 1; e < NumEnvelopes; ++e)

@@ -41,7 +41,12 @@ public:
     void process (ModBlock& b, int numSamples, double bpm, double ppq, bool playing, int noteOns,
                   float modWheel, float aftertouch, float bend01, const float* followers);
 
+    /** Drift (système de random) : quantité courante et temps du bruit, réutilisés pour les effets des bus. */
+    float driftNow = 0.0f;
+    double driftTime = 0.0;
+
 private:
+    std::atomic<float>* driftRaw = nullptr, *driftSpeedRaw = nullptr, *chaosRaw = nullptr;
     ModShared* shared = nullptr;
     const ModTargets* targets = nullptr;
     double sr = 44100.0;

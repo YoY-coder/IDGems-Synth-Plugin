@@ -41,6 +41,7 @@ const juce::StringArray& noiseTypeNames();
 const juce::StringArray& tableChoiceNames(); // tables d'usine + « Personnalisée »
 const juce::StringArray& texEngineNames();
 const juce::StringArray& scaleTypeNames();
+const juce::StringArray& personalityNames();
 const juce::StringArray& keyNames();
 /** Paramètre de l'Osc Texture : texId ("g_size") -> "tex_g_size". Empreinte : "fp_..." */
 inline juce::String texId (const char* key) { return juce::String ("tex_") + key; }

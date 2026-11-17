@@ -25,6 +25,12 @@ const juce::StringArray& scaleTypeNames()
                                        "Penta maj.", "Penta min.", "Blues", "Par tons", "Chromatique" };
     return n;
 }
+const juce::StringArray& personalityNames()
+{
+    static const juce::StringArray n { "Neutre", IDG_T ("Métal"), "Organique", IDG_T ("Digital cassé"), "Aquatique", IDG_T ("Poussière"), "Cosmique" };
+    return n;
+}
+
 const juce::StringArray& keyNames()
 {
     static const juce::StringArray n { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
@@ -269,6 +275,23 @@ juce::String helpFor (const juce::String& fullId)
             { "mr_amount", IDG_T ("Quantité globale des variations.") } };
         auto it3 = ph.find (id);
         return it3 == ph.end() ? juce::String() : it3->second;
+    }
+    if (id.startsWith ("rand_") || id.startsWith ("morph_"))
+    {
+        static const std::map<juce::String, juce::String> rh2 {
+            { "rand_amount", IDG_T ("Dosage du random : de la légère variation (0 %) au tirage total (100 %).") },
+            { "rand_personality", IDG_T ("Personnalité : oriente le random (types d'osc, filtres, effets, vitesses) pour lui donner un caractère.") },
+            { "rand_intensity", IDG_T ("Intensité de la personnalité : mélange entre la personnalité et un random neutre.") },
+            { "rand_sync", IDG_T ("Random calé sur le temps : le tirage attend le prochain temps / la prochaine mesure.") },
+            { "rand_glide", IDG_T ("Glide du random : transition douce vers les nouvelles valeurs.") },
+            { "rand_drift", IDG_T ("Drift : dérive lente et continue des paramètres (dans leurs plages, cadenas respectés).") },
+            { "rand_drift_speed", IDG_T ("Vitesse du drift.") },
+            { "rand_mutate", IDG_T ("Mutate auto : petites mutations du patch à intervalle régulier.") },
+            { "rand_guard", IDG_T ("Garde-fous : rejette les tirages muets ou saturés et égalise le volume entre deux tirages. Éteint = vrai chaos.") },
+            { "morph_x", IDG_T ("Morph pad : position X (mélange des snapshots).") },
+            { "morph_y", IDG_T ("Morph pad : position Y (mélange des snapshots).") } };
+        auto it4 = rh2.find (id);
+        return it4 == rh2.end() ? juce::String() : it4->second;
     }
     if (id.startsWith ("tex_") || id.startsWith ("fp_"))
     {
@@ -540,6 +563,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     B.b ("mr_cutoff", "Micro Random Cutoff", true);
     B.b ("mr_pan", "Micro Random Pan", true);
     B.b ("mr_phase", "Micro Random Phase", true);
+
+    // ---- Système de random
+    B.f ("rand_amount", "Random Amount", 0.0f, 1.0f, 0.5f, pctText);
+    B.c ("rand_personality", "Random Personality", personalityNames(), 0);
+    B.f ("rand_intensity", "Personality Intensity", 0.0f, 1.0f, 0.7f, pctText);
+    B.c ("rand_sync", "Random Sync", { IDG_T ("Immédiat"), "Au temps", IDG_T ("À la mesure"), "Toutes les 2 mesures", "Toutes les 4 mesures" }, 0);
+    B.t ("rand_glide", "Random Glide", 5000.0f, 500.0f, 0.0f);
+    B.f ("rand_drift", "Drift", 0.0f, 1.0f, 0.0f, pctText);
+    B.f ("rand_drift_speed", "Drift Speed", 0.01f, 2.0f, 0.2f, [] (float v, int) { return juce::String (v, 2) + " Hz"; }, 0.2f);
+    B.b ("rand_mutate", "Auto Mutate", false);
+    B.c ("rand_mutate_every", "Mutate Every", { "1 mesure", "2 mesures", "4 mesures", "8 mesures", "16 mesures" }, 1);
+    B.f ("rand_mutate_amount", "Mutate Amount", 0.0f, 1.0f, 0.15f, pctText);
+    B.b ("rand_guard", "Random Guards", true);
+    B.f ("morph_x", "Morph X", 0.0f, 1.0f, 0.5f, pctText);
+    B.f ("morph_y", "Morph Y", 0.0f, 1.0f, 0.5f, pctText);
 
     // ---- Envois des sources vers les bus (par défaut : tout dans le bus A)
     static const char* srcNames[] { "Osc A", "Osc B", "Sub", "Noise", "Texture" };

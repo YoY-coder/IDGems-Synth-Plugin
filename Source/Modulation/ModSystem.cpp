@@ -75,6 +75,7 @@ ModShared::ModShared()
     for (int i = 0; i < NumLfos; ++i) { tableIndex[i] = 0; lfoPhase[i] = 0.0f; setShape (i, idg::LfoShape::preset (0)); }
     for (auto& v : sourceValue) v = 0.0f;
     for (auto& v : fieldValue01) v = -1.0f;
+    for (int f = 0; f < NumModFields; ++f) { driftOk[f] = f != FOscSemi; fieldLo[f] = 0.0f; fieldHi[f] = 1.0f; }
 }
 
 void ModShared::setShape (int lfo, const idg::LfoShape& s)

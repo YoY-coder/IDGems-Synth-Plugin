@@ -238,6 +238,8 @@ TexturePage::TexturePage (IDGemsSynthProcessor& p)
                                                                          &fpShift, &fpSpeed, &fpView })
         addAndMakeVisible (c);
     for (int e = 0; e < NumTexEngines; ++e) addAndMakeVisible (engines.add (new EnginePanel (p, e)));
+    dice = std::make_unique<DiceButton> (p, [] { RandomEngine::Target t; t.scope = RandomEngine::Scope::Module; t.module = "tex"; return t; });
+    dice->attachTo (*this, 20, 14);
     startTimerHz (10);
 }
 

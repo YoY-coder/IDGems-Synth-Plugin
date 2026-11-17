@@ -81,6 +81,7 @@ private:
     juce::OwnedArray<juce::Component> seqCtl, arpCtl, genCtl, scaleCtl, sprayCtl, microCtl;
     juce::TextButton seqRandom { "RANDOM" }, seqClear { "EFFACER" }, generate { IDG_T ("GÉNÉRER") };
     ScaleView scaleView;
+    std::unique_ptr<DiceButton> dice;
     juce::Rectangle<int> seqArea, arpArea, genArea, scaleArea, sprayArea, microArea, topArea;
 };
 } // namespace idgs::ui

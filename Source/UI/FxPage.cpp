@@ -209,6 +209,14 @@ void StepGrid::mouseDrag (const juce::MouseEvent& e)
 RackPanel::RackPanel (IDGemsSynthProcessor& p) : proc (p), grid (p)
 {
     addAndMakeVisible (grid);
+    using T = RandomEngine::Target;
+    rackDice = std::make_unique<DiceButton> (p, [this] { T t; t.scope = RandomEngine::Scope::FxRack; t.rack = rack; return t; });
+    rackDice->attachTo (*this);
+    fxDice = std::make_unique<DiceButton> (p, [this] { T t; t.scope = RandomEngine::Scope::FxModule; t.rack = rack; t.index = fx; return t; });
+    addAndMakeVisible (*fxDice);
+    for (int f = 0; f < idg::NumFamilies; ++f)
+        addAndMakeVisible (famDice.add (new DiceButton (p, [this, f] { T t; t.scope = RandomEngine::Scope::FxFamily; t.rack = rack; t.index = f; return t; },
+                                                        idg::familyColour (f))));
     seqRate.addItemList (idg::seqRateNames(), 1);
     for (int i = 1; i <= idg::MaxSteps; ++i) seqLen.addItem (juce::String (i) + " pas", i);
     seqSwing.setSliderStyle (juce::Slider::LinearBar);
@@ -423,12 +431,18 @@ void RackPanel::resized()
     {
         auto a = famArea;
         const int w = a.getWidth() / idg::NumFamilies;
-        for (auto* k : famMix) k->setBounds (a.removeFromLeft (w).reduced (8, 0));
+        for (int f = 0; f < famMix.size(); ++f)
+        {
+            auto col = a.removeFromLeft (w);
+            famMix[f]->setBounds (col.reduced (8, 0));
+            if (f < famDice.size()) famDice[f]->setBounds (col.getRight() - 26, col.getY(), 18, 16);
+        }
     }
     r.removeFromTop (6);
     listArea = r.removeFromLeft (230).withTrimmedBottom (14);
     r.removeFromLeft (10);
     panelArea = r;
+    if (fxDice != nullptr) fxDice->setBounds (panelArea.getRight() - 26, panelArea.getY() + 8, 20, 18);
     auto p = r.withTrimmedTop (50);
     auto common = p.removeFromTop (24);
     if (fxOn) fxOn->setBounds (common.removeFromLeft (46));

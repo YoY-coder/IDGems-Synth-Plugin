@@ -68,6 +68,8 @@ private:
     int dragFrom = -1;
     bool dragMoved = false;
     juce::Rectangle<int> listArea, panelArea, seqArea, famArea;
+    std::unique_ptr<DiceButton> rackDice, fxDice;
+    juce::OwnedArray<DiceButton> famDice;
     juce::OwnedArray<Knob> famMix;
     // panneau de l'effet sélectionné
     juce::OwnedArray<juce::Component> fxControls;

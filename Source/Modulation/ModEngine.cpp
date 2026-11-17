@@ -16,6 +16,9 @@ void ModGlobal::init (juce::AudioProcessorValueTreeState& apvts, ModShared& s, c
     for (int e = 0; e < NumEnvelopes; ++e)
         for (int k = 0; k < 9; ++k) er[e].v[k] = r (envId (e, ek[k]));
     for (int m = 0; m < NumMacros; ++m) macros[m] = r (macroId (m));
+    driftRaw = r ("rand_drift");
+    driftSpeedRaw = r ("rand_drift_speed");
+    chaosRaw = r (macroId (NumMacros - 1));
 }
 
 void ModGlobal::reset()
@@ -65,6 +68,24 @@ void ModGlobal::process (ModBlock& b, int n, double bpm, double ppq, bool playin
     }
     for (int f = 0; f < NumModFields; ++f)
         if (b.fieldUsed[f]) if (auto* p = targets->parameter (f)) b.base01[f] = p->getValue();
+
+    // ---- drift : dérive lente des champs (dans leur plage de random, cadenas respectés) ; la macro Chaos l'amplifie
+    driftNow = juce::jlimit (0.0f, 1.0f, driftRaw->load() * (1.0f + chaosRaw->load()));
+    driftTime += dt * (double) driftSpeedRaw->load();
+    if (driftNow > 0.0001f)
+    {
+        for (int f = 0; f < NumModFields; ++f)
+        {
+            if (! shared->driftOk[f].load (std::memory_order_relaxed)) continue;
+            auto* p = targets->parameter (f);
+            if (p == nullptr) continue;
+            const float n = p->getValue();
+            const float lo = shared->fieldLo[f].load (std::memory_order_relaxed), hi = shared->fieldHi[f].load (std::memory_order_relaxed);
+            const float nz = idg::dsp::smoothNoise (driftTime + (double) f * 0.37, (uint32_t) (f + 101)) * 2.0f - 1.0f;
+            b.base01[f] = juce::jlimit (juce::jmin (lo, n), juce::jmax (hi, n), n + nz * driftNow * 0.25f * (hi - lo));
+            b.fieldUsed[f] = true;
+        }
+    }
 
     // ---- macros
     for (int m = 0; m < NumMacros; ++m)

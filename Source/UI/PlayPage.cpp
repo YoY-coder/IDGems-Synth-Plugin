@@ -287,6 +287,8 @@ void ScaleView::paint (juce::Graphics& g)
 PlayPage::PlayPage (IDGemsSynthProcessor& p)
     : proc (p), modes (p), midiDrag (p), seqEditor (p), scaleView (p)
 {
+    dice = std::make_unique<DiceButton> (p, [] { RandomEngine::Target t; t.scope = RandomEngine::Scope::Section; t.section = SecPlay; return t; });
+    dice->attachTo (*this, 20, 14);
     auto knob = [&p] (juce::OwnedArray<juce::Component>& a, const char* id, const juce::String& l) { a.add (new Knob (p, id, l, playCol)); };
     auto combo = [&p] (juce::OwnedArray<juce::Component>& a, const char* id) { a.add (new ParamCombo (p, id)); };
     auto toggle = [&p] (juce::OwnedArray<juce::Component>& a, const char* id, const juce::String& l) { a.add (new ParamToggle (p, id, l, playCol)); };

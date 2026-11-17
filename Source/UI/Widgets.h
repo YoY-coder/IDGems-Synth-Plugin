@@ -43,7 +43,7 @@ private:
     int depthSlot = -1;
     float depthStart = 0.0f;
     float lastMod = -2.0f;
-    int lastVersion = -1, lastHoverSrc = -2, lastDragSrc = -2;
+    int lastVersion = -1, lastHoverSrc = -2, lastDragSrc = -2, lastRandVersion = -1;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
 };
 

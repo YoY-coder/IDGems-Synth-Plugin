@@ -70,6 +70,9 @@ struct ModShared
     std::atomic<float> lfoPhase[NumLfos];
     std::atomic<float> fieldValue01[NumModFields];     // valeur modulée (0..1) de chaque cible, voix la plus récente
     std::atomic<int> version { 0 };                    // incrémenté à chaque changement de connexion
+    // drift (système de random) : champs autorisés (pas de cadenas) et plages de random
+    std::atomic<bool> driftOk[NumModFields];
+    std::atomic<float> fieldLo[NumModFields], fieldHi[NumModFields];
 
     ModShared();
     void setShape (int lfo, const idg::LfoShape& s);
