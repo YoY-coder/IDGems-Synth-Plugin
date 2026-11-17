@@ -44,3 +44,7 @@ un retour global. À chaque phase : compiler en local, tests de stabilité, comm
 - Phase 4 : faite. `Source/Fx/` = rack IDGems porté (registre par rack : préfixes busa_/busb_/busc_/mast_),
   moteur de bus dans `PluginProcessor::processBlock` (tranches de 32 éch.), UI `Source/UI/FxPage.*`.
   Mode sans latence activé par défaut (jeu en direct).
+- Phase 5 : faite. `Source/Synth/Texture.h` (GrainCloud, SpectralVoice, TextureVoice, FingerprintFilter),
+  analyses dans `SampleData` (SpectralData, FingerprintData, loadRaw), emplacements de sons 2-5 dans le
+  processeur (AssetTex1/2, AssetFingerprint, AssetData), onglet `UI/TexturePage.*`. Osc A/B : modes
+  Granulaire / Spectral (réglages fins partagés avec la Texture). Boucle Feed : phase 8.

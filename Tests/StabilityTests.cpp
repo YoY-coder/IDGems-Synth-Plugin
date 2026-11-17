@@ -872,6 +872,99 @@ int main (int argc, char** argv)
         }
     }
 
+    // ===================================================================== PHASE 5
+    // 23. Osc Texture : chaque moteur, morph, empreinte, modes granulaire / spectral des Osc A / B
+    {
+        std::cout << "23. Osc Texture (6 moteurs, morph, empreinte, modes granulaire / spectral)..." << std::endl;
+        auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("idgs_tex");
+        dir.deleteRecursively();
+        dir.createDirectory();
+        auto writeWav = [&] (const juce::String& name, double secs, std::function<float (double)> fn)
+        {
+            auto f = dir.getChildFile (name);
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::OutputStream> os (f.createOutputStream().release());
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), 44100.0, 1, 16, {}, 0));
+            if (w != nullptr) os.release();
+            juce::AudioBuffer<float> b (1, (int) (secs * 44100.0));
+            for (int i = 0; i < b.getNumSamples(); ++i) b.setSample (0, i, fn (i / 44100.0));
+            if (w != nullptr) w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+            return f;
+        };
+        juce::Random wr (5);
+        auto s1 = writeWav ("Tex_C3.wav", 1.5, [] (double t) { return 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 261.6 * t) * (float) (0.5 + 0.5 * std::sin (t * 7.0)); });
+        auto s2 = writeWav ("Tex2.wav", 1.0, [&wr] (double) { return wr.nextFloat() * 0.6f - 0.3f; });
+        auto voice = writeWav ("Voix.wav", 1.0, [] (double t) { return 0.4f * (float) (std::sin (2.0 * juce::MathConstants<double>::pi * 180.0 * t) + 0.5 * std::sin (2.0 * juce::MathConstants<double>::pi * 1100.0 * t * (1.0 + t))); });
+        auto anyFile = dir.getChildFile ("data.bin");
+        {
+            juce::MemoryBlock mb;
+            for (int i = 0; i < 200000; ++i) { const uint8_t b = (uint8_t) ((i * 37 + (i >> 7)) & 0xff); mb.append (&b, 1); }
+            anyFile.replaceWithData (mb.getData(), mb.getSize());
+        }
+        for (int e = 0; e < NumTexEngines; ++e)
+            for (float morph : { 0.0f, 0.5f })
+            {
+                Harness h;
+                h.set (P::oscAOn, 0.0f);
+                h.set ("tex_on", 1.0f);
+                h.set ("tex_engine1", (float) e);
+                h.set ("tex_engine2", (float) ((e + 1) % NumTexEngines));
+                h.set ("tex_morph", morph);
+                h.proc.dropFiles (IDGemsSynthProcessor::AssetTex1, { s1 });
+                h.proc.dropFiles (IDGemsSynthProcessor::AssetTex2, { s2 });
+                h.proc.dropFiles (IDGemsSynthProcessor::AssetData, { anyFile });
+                h.set ("tex_r_exciter", 1.0f);
+                for (int n : { 48, 60, 72 }) h.noteOn (n, 0.9f);
+                h.run (0.8);
+                const float pk = h.peak();
+                const auto name = texEngineNames()[e] + (morph > 0.0f ? " + morph" : "");
+                check (pk >= 0.0f && pk <= ceilingGain (h), "texture " + name + " : NaN ou plafond");
+                check (pk > 0.005f, "texture " + name + " : silence (" + juce::String (pk) + ")");
+            }
+        {
+            // granulaire live (Osc A + B) + empreinte spectrale
+            Harness h;
+            h.set ("tex_on", 1.0f);
+            h.set ("tex_g_source", 1.0f);
+            h.set ("fp_on", 1.0f);
+            h.proc.dropFiles (IDGemsSynthProcessor::AssetFingerprint, { voice });
+            const auto* fp = h.proc.currentSamples (IDGemsSynthProcessor::AssetFingerprint);
+            check (fp != nullptr && fp->zones[0]->fingerprint != nullptr, "empreinte non calculee");
+            h.noteOn (55, 1.0f);
+            h.run (1.0);
+            check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h) && h.peak() > 0.005f, "granulaire live + empreinte : NaN, plafond ou silence");
+            // état : les emplacements sont rechargés
+            juce::MemoryBlock mb;
+            h.proc.getStateInformation (mb);
+            Harness b;
+            b.proc.setStateInformation (mb.getData(), (int) mb.getSize());
+            check (b.proc.currentSamples (IDGemsSynthProcessor::AssetFingerprint) != nullptr, "empreinte non restauree");
+        }
+        for (int mode : { (int) ModeGranular, (int) ModeSpectral })
+        {
+            Harness h;
+            h.set ("osca_mode", (float) mode);
+            h.proc.dropFiles (0, { s1 });
+            if (mode == ModeSpectral) check (h.proc.currentSamples (0) != nullptr && h.proc.currentSamples (0)->zones[0]->spectral != nullptr, "osc spectral : analyse absente");
+            for (int n : { 48, 60 }) h.noteOn (n, 0.9f);
+            h.run (0.8);
+            check (h.peak() >= 0.0f && h.peak() <= ceilingGain (h) && h.peak() > 0.005f,
+                   juce::String ("Osc A mode ") + (mode == ModeGranular ? "granulaire" : "spectral") + " : NaN, plafond ou silence");
+        }
+        {
+            // CPU : 16 voix, texture spectrale + granulaire en morph
+            Harness h (48000.0, 256);
+            h.set ("tex_on", 1.0f); h.set ("tex_engine1", (float) TexSpectral); h.set ("tex_engine2", (float) TexGranular); h.set ("tex_morph", 0.5f);
+            h.proc.dropFiles (IDGemsSynthProcessor::AssetTex1, { s1 });
+            for (int n = 40; n < 56; ++n) h.noteOn (n, 0.7f);
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            h.run (3.0);
+            const double ratio = (juce::Time::getMillisecondCounterHiRes() - t0) / 3000.0;
+            std::cout << "   charge texture (16 voix, spectral + granulaire) : " << juce::String (ratio * 100.0, 1) << " %" << std::endl;
+        }
+        dir.deleteRecursively();
+    }
+
     std::cout << (failures == 0 ? "=== TOUS LES TESTS PASSENT ===" : "=== " + juce::String (failures).toStdString() + " ECHEC(S) ===") << std::endl;
     return failures == 0 ? 0 : 1;
 }

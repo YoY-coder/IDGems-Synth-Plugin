@@ -99,7 +99,7 @@ public:
     void tick();
 
 private:
-    static constexpr int NumCells = 5; // Osc A, Osc B, Sub, Noise, chaînage
+    static constexpr int NumCells = NumSendSources + 1; // Osc A, Osc B, Sub, Noise, Texture, chaînage
     int cellAt (float x) const { return juce::jlimit (0, NumCells - 1, (int) (x / ((float) getWidth() / NumCells))); }
     bool sourceIn (int src) const;
     void toggleSource (int src);

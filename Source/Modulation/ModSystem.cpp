@@ -163,6 +163,12 @@ void ModTargets::init (juce::AudioProcessor& p)
     bind (FEnvSustain, P::env1Sustain);
     bind (FEnvRelease, P::env1Release);
     bind (FGlide, P::glide);
+    bind (FTexLevel, texId ("level")); bind (FTexPan, texId ("pan")); bind (FTexMorph, texId ("morph"));
+    bind (FTexGPos, texId ("g_pos")); bind (FTexGSize, texId ("g_size")); bind (FTexGDensity, texId ("g_density"));
+    bind (FTexGSpray, texId ("g_spray")); bind (FTexSShift, texId ("s_shift")); bind (FTexSStretch, texId ("s_stretch"));
+    bind (FTexSSmear, texId ("s_smear")); bind (FTexCAmount, texId ("c_amount")); bind (FTexRDecay, texId ("r_decay"));
+    bind (FTexRBright, texId ("r_bright")); bind (FTexNColor, texId ("n_color")); bind (FTexDOffset, texId ("d_offset"));
+    bind (FFpAmount, "fp_amount"); bind (FFpShift, "fp_shift");
 }
 
 juce::String ModTargets::paramId (int paramIndex) const { return paramIndex >= 0 && paramIndex < ids.size() ? ids[paramIndex] : juce::String(); }

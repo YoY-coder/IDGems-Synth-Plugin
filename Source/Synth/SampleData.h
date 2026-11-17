@@ -3,6 +3,28 @@
 
 namespace idgs
 {
+/** Analyse spectrale d'un son (magnitudes par trame) pour la resynthèse spectrale. */
+struct SpectralData
+{
+    static constexpr int Order = 11, N = 1 << Order, Bins = N / 2 + 1, Hop = N / 4;
+    static constexpr double MaxSeconds = 20.0;
+    int numFrames = 0;
+    std::vector<float> mags; // numFrames * Bins
+    const float* frame (int f) const { return mags.data() + (size_t) juce::jlimit (0, juce::jmax (0, numFrames - 1), f) * Bins; }
+    static std::unique_ptr<SpectralData> analyse (const float* mono, int len);
+};
+
+/** Empreinte spectrale : énergie de 32 bandes au fil du temps (100 trames / s). */
+struct FingerprintData
+{
+    static constexpr int NumBands = 32;
+    static constexpr double FrameRate = 100.0;
+    int numFrames = 0;
+    std::vector<float> env; // numFrames * NumBands (0..1)
+    static float bandFreq (int b) { return 80.0f * std::pow (150.0f, (float) b / (float) (NumBands - 1)); } // 80 Hz .. 12 kHz
+    static std::unique_ptr<FingerprintData> analyse (const float* mono, int len, double sampleRate);
+};
+
 /** Un sample chargé en mémoire (stéréo), avec sa note d'origine et sa zone de clavier. */
 struct SampleZone
 {
@@ -11,6 +33,8 @@ struct SampleZone
     int root = 60;                   // note jouée à la hauteur d'origine (C3 = 60)
     int lo = 0, hi = 127;            // zone du clavier (multisample)
     juce::File file;
+    std::unique_ptr<SpectralData> spectral;       // calculé à la demande (modes spectraux)
+    std::unique_ptr<FingerprintData> fingerprint; // calculé pour l'empreinte spectrale
 
     int length() const { return data.getNumSamples(); }
 };
@@ -42,6 +66,13 @@ struct SampleSet
 
     /** Formats reconnus (wav, aiff, flac, ogg, mp3 selon le système). */
     static bool isAudioFile (const juce::File& f);
+
+    /** Data bending : lit les octets bruts de n'importe quel fichier comme de l'audio
+        (canal 0 = lecture 8 bits, canal 1 = lecture 16 bits). 4 Mo max. */
+    static std::unique_ptr<SampleSet> loadRaw (const juce::File& f, juce::String& error);
+    /** Calcule l'analyse spectrale / l'empreinte de chaque zone (thread de l'interface). */
+    void computeSpectral();
+    void computeFingerprint();
 
     /** Lit n'importe quel fichier audio en mono (pour la conversion sample -> wavetable). */
     static std::vector<float> loadMono (const juce::File& f, juce::String& error);

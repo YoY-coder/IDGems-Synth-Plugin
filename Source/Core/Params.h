@@ -7,7 +7,8 @@ namespace idgs
 constexpr int MaxVoices = 32;
 constexpr int NumOscs = 2;
 
-enum OscMode { ModeWavetable, ModeSample, ModeMulti, NumOscModes };
+enum OscMode { ModeWavetable, ModeSample, ModeMulti, ModeGranular, ModeSpectral, NumOscModes };
+enum TexEngine { TexGranular, TexSpectral, TexChaos, TexResonator, TexNoise, TexDataBend, NumTexEngines };
 
 enum WarpMode
 {
@@ -16,6 +17,7 @@ enum WarpMode
 };
 
 enum ModSource { SrcOscA, SrcOscB, SrcSub, SrcNoise, NumModSources };
+constexpr int SrcTexture = 4; // source « Texture » pour les envois / routages (pas une source de cross-mod)
 enum Route { RouteF1, RouteF2, RouteBoth, RouteDirect };
 enum VoiceMode { VoicePoly, VoiceMono, VoiceLegato };
 
@@ -34,6 +36,9 @@ const juce::StringArray& routeNames();
 const juce::StringArray& filterTypeNames();
 const juce::StringArray& noiseTypeNames();
 const juce::StringArray& tableChoiceNames(); // tables d'usine + « Personnalisée »
+const juce::StringArray& texEngineNames();
+/** Paramètre de l'Osc Texture : texId ("g_size") -> "tex_g_size". Empreinte : "fp_..." */
+inline juce::String texId (const char* key) { return juce::String ("tex_") + key; }
 
 /** Identifiant d'un paramètre d'oscillateur : oscId (0, "level") -> "osca_level". */
 inline juce::String oscId (int osc, const char* key) { return juce::String (osc == 0 ? "osca_" : "oscb_") + key; }
@@ -57,11 +62,11 @@ const juce::StringArray& divisionNames();
 double divisionBeats (int index);
 
 constexpr int NumBuses = 3;          // A, B, C (+ Master)
-constexpr int NumSendSources = 4;    // Osc A, Osc B, Sub, Noise
+constexpr int NumSendSources = 5;    // Osc A, Osc B, Sub, Noise, Texture
 /** Envoi d'une source vers un bus : sendId (0, 1) -> "send_osca_b". */
 inline juce::String sendId (int src, int bus)
 {
-    static const char* s[] { "osca", "oscb", "sub", "noise" };
+    static const char* s[] { "osca", "oscb", "sub", "noise", "tex" };
     return juce::String ("send_") + s[src] + "_" + juce::String::charToString ((juce::juce_wchar) ('a' + bus));
 }
 /** Paramètre d'un bus : busId (1, "vol") -> "bus_b_vol". */

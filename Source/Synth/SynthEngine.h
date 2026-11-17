@@ -3,6 +3,7 @@
 #include "Oscillator.h"
 #include "NoiseGen.h"
 #include "VoiceFilter.h"
+#include "Texture.h"
 #include "../Modulation/ModEngine.h"
 
 namespace idgs
@@ -17,6 +18,8 @@ struct VoiceParams
     OscParams osc[NumOscs];
     SubParams sub;
     NoiseParams noise;
+    TexParams tex;
+    FpParams fp;
     FilterParams filt[2];
     bool serial = true;
     int voiceMode = VoicePoly;
@@ -25,7 +28,7 @@ struct VoiceParams
     float bendSemis = 0.0f;
     float velSens = 0.7f;
     int maxVoices = 16;
-    float send[NumSendSources][NumBuses] { { 1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 } };
+    float send[NumSendSources][NumBuses] { { 1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 } };
     bool busActive[NumBuses] { true, false, false };
     Envelope::Settings env;
     const ModBlock* mod = nullptr;   // modulations du bloc (nul = aucune)
@@ -94,7 +97,10 @@ private:
     int subMip = 0;
 
     // niveaux lissés (anti-zipper) : Osc A, Osc B, Sub, Noise
-    float lvl[4] {}, panL[2] { 0.7071f, 0.7071f }, panR[2] { 0.7071f, 0.7071f };
+    float lvl[NumSendSources] {}, panL[3] { 0.7071f, 0.7071f, 0.7071f }, panR[3] { 0.7071f, 0.7071f, 0.7071f };
+    TextureVoice texv;
+    FingerprintFilter fpf[NumBuses];
+    bool texActive = false;
     float smoothCoef = 0.01f;
     bool oscActive[NumOscs] { true, true };
     bool subActive = false, noiseActive = false;

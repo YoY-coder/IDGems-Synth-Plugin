@@ -1,4 +1,5 @@
 #include "SampleData.h"
+#include "../Core/Dsp.h"
 
 namespace idgs
 {
@@ -98,6 +99,109 @@ std::unique_ptr<SampleSet> SampleSet::load (const juce::Array<juce::File>& files
     }
     set->name = multi ? list[0].getParentDirectory().getFileName() + " (" + juce::String ((int) set->zones.size()) + " samples)"
                       : list[0].getFileNameWithoutExtension();
+    return set;
+}
+
+std::unique_ptr<SpectralData> SpectralData::analyse (const float* x, int len)
+{
+    auto d = std::make_unique<SpectralData>();
+    len = juce::jmin (len, (int) (MaxSeconds * 48000.0));
+    d->numFrames = juce::jmax (1, (len - N) / Hop + 1);
+    d->mags.assign ((size_t) d->numFrames * Bins, 0.0f);
+    juce::dsp::FFT fft (Order);
+    std::vector<float> buf ((size_t) N * 2);
+    std::vector<float> win ((size_t) N);
+    for (int i = 0; i < N; ++i) win[(size_t) i] = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) N);
+    for (int f = 0; f < d->numFrames; ++f)
+    {
+        std::fill (buf.begin(), buf.end(), 0.0f);
+        for (int i = 0; i < N; ++i)
+        {
+            const int k = f * Hop + i;
+            buf[(size_t) i] = k < len ? x[k] * win[(size_t) i] : 0.0f;
+        }
+        fft.performFrequencyOnlyForwardTransform (buf.data());
+        auto* m = d->mags.data() + (size_t) f * Bins;
+        for (int b = 0; b < Bins; ++b) m[b] = buf[(size_t) b] * (2.0f / (float) N);
+    }
+    return d;
+}
+
+std::unique_ptr<FingerprintData> FingerprintData::analyse (const float* x, int len, double sr)
+{
+    auto d = std::make_unique<FingerprintData>();
+    const int hop = juce::jmax (1, (int) (sr / FrameRate));
+    d->numFrames = juce::jmax (1, len / hop);
+    d->env.assign ((size_t) d->numFrames * NumBands, 0.0f);
+    // banc de passe-bandes (un par bande), énergie RMS par trame
+    std::vector<idg::dsp::SVF> bp ((size_t) NumBands);
+    for (int b = 0; b < NumBands; ++b) bp[(size_t) b].set (sr, bandFreq (b), 4.0f);
+    float mx = 1.0e-9f;
+    for (int f = 0; f < d->numFrames; ++f)
+    {
+        float acc[NumBands] {};
+        for (int i = 0; i < hop; ++i)
+        {
+            const int k = f * hop + i;
+            const float v = k < len ? x[k] : 0.0f;
+            for (int b = 0; b < NumBands; ++b) { const float y = bp[(size_t) b].bandpass (0, v); acc[b] += y * y; }
+        }
+        for (int b = 0; b < NumBands; ++b)
+        {
+            const float e = std::sqrt (acc[b] / (float) hop);
+            d->env[(size_t) f * NumBands + (size_t) b] = e;
+            mx = juce::jmax (mx, e);
+        }
+    }
+    for (auto& e : d->env) e = juce::jlimit (0.0f, 1.0f, e / mx);
+    return d;
+}
+
+void SampleSet::computeSpectral()
+{
+    for (auto& z : zones)
+    {
+        if (z->spectral != nullptr) continue;
+        std::vector<float> mono ((size_t) z->length());
+        for (int i = 0; i < z->length(); ++i) mono[(size_t) i] = 0.5f * (z->data.getSample (0, i) + z->data.getSample (1, i));
+        z->spectral = SpectralData::analyse (mono.data(), (int) mono.size());
+    }
+}
+
+void SampleSet::computeFingerprint()
+{
+    for (auto& z : zones)
+    {
+        if (z->fingerprint != nullptr) continue;
+        std::vector<float> mono ((size_t) z->length());
+        for (int i = 0; i < z->length(); ++i) mono[(size_t) i] = 0.5f * (z->data.getSample (0, i) + z->data.getSample (1, i));
+        z->fingerprint = FingerprintData::analyse (mono.data(), (int) mono.size(), z->sampleRate);
+    }
+}
+
+std::unique_ptr<SampleSet> SampleSet::loadRaw (const juce::File& f, juce::String& error)
+{
+    juce::MemoryBlock mb;
+    if (! f.existsAsFile() || ! f.loadFileAsData (mb) || mb.getSize() < 64) { error = IDG_T ("Fichier illisible : ") + f.getFileName(); return nullptr; }
+    const size_t bytes = juce::jmin (mb.getSize(), (size_t) (4 * 1024 * 1024));
+    auto set = std::make_unique<SampleSet>();
+    auto z = std::make_unique<SampleZone>();
+    const int len = (int) bytes;
+    z->data.setSize (2, len);
+    z->data.clear();
+    const auto* b = static_cast<const uint8_t*> (mb.getData());
+    auto* c8 = z->data.getWritePointer (0);
+    auto* c16 = z->data.getWritePointer (1);
+    for (int i = 0; i < len; ++i) c8[i] = ((float) b[i] - 128.0f) / 128.0f;
+    for (int i = 0; i + 1 < len; i += 2)
+    {
+        const auto v = (int16_t) (uint16_t) (b[i] | (b[i + 1] << 8));
+        c16[i / 2] = (float) v / 32768.0f;
+    }
+    z->sampleRate = 44100.0;
+    z->file = f;
+    set->zones.push_back (std::move (z));
+    set->name = f.getFileName() + " (" + juce::String ((int) (bytes / 1024)) + " Ko)";
     return set;
 }
 

@@ -34,6 +34,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
         : proc (p),
           synth (p),
           macros (p),
+          tex (p),
           fx (p),
           mod (p),
           arp (IDG_T ("ARPÉ // SÉQUENCEUR"), { IDG_T ("Phase 6 : arpégiateur, séquenceur 32 pas, gammes, mutation,"), IDG_T ("export MIDI en glisser-déposer, Note Spray.") }),
@@ -61,7 +62,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
         addChildComponent (browser);
         refreshPresetName();
 
-        const juce::StringArray names { "SYNTH", "FX", "MODULATION", IDG_T ("ARPÉ / SÉQ"), "EXPORT" };
+        const juce::StringArray names { "SYNTH", "TEXTURE", "FX", "MODULATION", IDG_T ("ARPÉ / SÉQ"), "EXPORT" };
         for (int i = 0; i < names.size(); ++i)
         {
             auto* b = tabs.add (new juce::TextButton (names[i]));
@@ -69,7 +70,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
             b->setColour (juce::TextButton::buttonOnColourId, Theme::accent);
             addAndMakeVisible (b);
         }
-        pages = { &synth, &fx, &mod, &arp, &exp };
+        pages = { &synth, &tex, &fx, &mod, &arp, &exp };
         for (auto* pg : pages) addChildComponent (pg);
 
         panicBtn.setButtonText ("PANIC");
@@ -152,7 +153,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
         auto r = getLocalBounds();
         auto top = r.removeFromTop (topH);
         top.removeFromLeft (264);
-        const int tabW[] { 66, 50, 104, 96, 70 };
+        const int tabW[] { 66, 76, 46, 100, 92, 66 };
         for (int i = 0; i < tabs.size(); ++i) tabs[i]->setBounds (top.removeFromLeft (tabW[i]).reduced (2, 14));
         top.removeFromRight (10);
         meter.setBounds (top.removeFromRight (34).reduced (0, 8));
@@ -186,6 +187,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
     juce::OwnedArray<juce::TextButton> tabs;
     SynthPage synth;
     MacroColumn macros;
+    TexturePage tex;
     FxPage fx;
     ComingSoonPage arp, exp;
     ModListPage mod;

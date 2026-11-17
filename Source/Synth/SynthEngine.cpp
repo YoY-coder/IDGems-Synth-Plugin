@@ -34,6 +34,8 @@ void Voice::prepare (double sampleRate)
     for (auto& e : modEnv) e.prepare (sr);
     for (auto& o : osc) o.prepare (sr);
     noise.prepare (sr);
+    texv.prepare (sr);
+    for (auto& f : fpf) f.prepare (sr);
     for (auto& fb : filt) for (auto& f : fb) f.prepare (sr);
     fadeStep = 1.0f / (fadeMs * 0.001f * (float) sr);
     smoothCoef = 1.0f - std::exp (-1.0f / (0.004f * (float) sr)); // ~4 ms
@@ -67,6 +69,8 @@ void Voice::start (int n, float vel, uint64_t a, const VoiceParams& p, idg::dsp:
 
     for (int o = 0; o < NumOscs; ++o) osc[o].start (p.osc[o], n, rng);
     noise.reset (rng.next());
+    texv.start (p.tex, n, rng);
+    for (auto& f : fpf) f.reset();
     for (auto& fb : filt) for (auto& f : fb) f.reset();
     subPh = 0.0f;
     subLast = noiseLast = 0.0f;
@@ -76,8 +80,10 @@ void Voice::start (int n, float vel, uint64_t a, const VoiceParams& p, idg::dsp:
     lvl[1] = p.osc[1].on ? p.osc[1].level : 0.0f;
     lvl[2] = p.sub.on ? p.sub.level : 0.0f;
     lvl[3] = p.noise.on ? p.noise.level : 0.0f;
+    lvl[4] = p.tex.on ? p.tex.level : 0.0f;
     panGains (p.sub.pan, panL[0], panR[0]);
     panGains (p.noise.pan, panL[1], panR[1]);
+    panGains (p.tex.pan, panL[2], panR[2]);
 
     env.reset();
     env.noteOn();
@@ -125,6 +131,7 @@ void Voice::steal (int n, float vel, uint64_t a, float fromPitch, bool glide)
 void Voice::computeModulation (const VoiceParams& p)
 {
     local = p;
+    for (auto& o : local.osc) o.tex = &local.tex;
     const ModBlock* mb = p.mod;
     ageSec += (float) ControlRate / (float) sr;
     if (mb == nullptr || mb->numSlots == 0) return;
@@ -227,6 +234,23 @@ void Voice::computeModulation (const VoiceParams& p)
             case FEnvSustain: local.env.sustain = real; break;
             case FEnvRelease: local.env.releaseMs = real; break;
             case FGlide: local.glideMs = real; break;
+            case FTexLevel: local.tex.level = real; break;
+            case FTexPan: local.tex.pan = real; break;
+            case FTexMorph: local.tex.morph = real; break;
+            case FTexGPos: local.tex.gPos = real; break;
+            case FTexGSize: local.tex.gSize = real; break;
+            case FTexGDensity: local.tex.gDensity = real; break;
+            case FTexGSpray: local.tex.gSpray = real; break;
+            case FTexSShift: local.tex.sShift = real; break;
+            case FTexSStretch: local.tex.sStretch = real; break;
+            case FTexSSmear: local.tex.sSmear = real; break;
+            case FTexCAmount: local.tex.cAmount = real; break;
+            case FTexRDecay: local.tex.rDecay = real; break;
+            case FTexRBright: local.tex.rBright = real; break;
+            case FTexNColor: local.tex.nColor = real; break;
+            case FTexDOffset: local.tex.dOffset = real; break;
+            case FFpAmount: local.fp.amount = real; break;
+            case FFpShift: local.fp.shift = real; break;
             default: break;
         }
     }
@@ -255,6 +279,9 @@ void Voice::control (const VoiceParams& base)
 
     subActive = p.sub.on || lvl[2] > 1.0e-5f || usesSource (p.osc[0], SrcSub) || usesSource (p.osc[1], SrcSub);
     noiseActive = p.noise.on || lvl[3] > 1.0e-5f || usesSource (p.osc[0], SrcNoise) || usesSource (p.osc[1], SrcNoise);
+    texActive = p.tex.on || lvl[4] > 1.0e-5f;
+    if (texActive) texv.control (p.tex, pitchNow);
+    for (int b = 0; b < NumBuses; ++b) if (p.busActive[b]) fpf[b].control (p.fp, ControlRate);
     const float noteHz = 440.0f * std::pow (2.0f, (pitchNow - 69.0f) / 12.0f);
     noise.control (p.noise.type, p.noise.tone, noteHz, ControlRate);
 
@@ -279,15 +306,17 @@ void Voice::render (float* const* busL, float* const* busR, int n, const VoicePa
     const VoiceParams& p = local; // réglages modulés (mis à jour par control())
     const float velGain = (1.0f - base.velSens + base.velSens * velocity * velocity) * voiceHeadroom;
     const float bothGain = base.serial ? 1.0f : 0.7071f;
-    float tLvl[4], tpl[2], tpr[2];
+    float tLvl[NumSendSources], tpl[3], tpr[3];
     auto targets = [&]
     {
         tLvl[0] = p.osc[0].on ? p.osc[0].level : 0.0f;
         tLvl[1] = p.osc[1].on ? p.osc[1].level : 0.0f;
         tLvl[2] = p.sub.on ? p.sub.level : 0.0f;
         tLvl[3] = p.noise.on ? p.noise.level : 0.0f;
+        tLvl[4] = p.tex.on ? p.tex.level : 0.0f;
         panGains (p.sub.pan, tpl[0], tpr[0]);
         panGains (p.noise.pan, tpl[1], tpr[1]);
+        panGains (p.tex.pan, tpl[2], tpr[2]);
     };
     targets();
 
@@ -313,12 +342,12 @@ void Voice::render (float* const* busL, float* const* busR, int n, const VoicePa
         if (ctrl <= 0) { control (base); targets(); ctrl = ControlRate; }
         --ctrl;
 
-        for (int k = 0; k < 4; ++k) lvl[k] += (tLvl[k] - lvl[k]) * smoothCoef;
-        for (int k = 0; k < 2; ++k) { panL[k] += (tpl[k] - panL[k]) * smoothCoef; panR[k] += (tpr[k] - panR[k]) * smoothCoef; }
+        for (int k = 0; k < NumSendSources; ++k) lvl[k] += (tLvl[k] - lvl[k]) * smoothCoef;
+        for (int k = 0; k < 3; ++k) { panL[k] += (tpl[k] - panL[k]) * smoothCoef; panR[k] += (tpr[k] - panR[k]) * smoothCoef; }
 
         // ---- sources
         const float mods[NumModSources] { osc[0].last, osc[1].last, subLast, noiseLast };
-        float src[4][2] {};
+        float src[NumSendSources][2] {};
         if (oscActive[0]) osc[0].tick (p.osc[0], mods, osc[1].wrapped, src[0][0], src[0][1]);
         if (oscActive[1]) osc[1].tick (p.osc[1], mods, osc[0].wrapped, src[1][0], src[1][1]);
         if (subActive)
@@ -337,15 +366,22 @@ void Voice::render (float* const* busL, float* const* busR, int n, const VoicePa
             src[3][0] = nl * panL[1] * 1.4142f;
             src[3][1] = nr * panR[1] * 1.4142f;
         }
+        if (texActive)
+        {
+            float tl, tr;
+            texv.tick (p.tex, osc[0].last, osc[0].last + osc[1].last, rng, tl, tr);
+            src[4][0] = tl * panL[2] * 1.4142f;
+            src[4][1] = tr * panR[2] * 1.4142f;
+        }
 
         const float g = e * velGain * fade;
-        const int routes[4] { p.osc[0].route, p.osc[1].route, p.sub.route, p.noise.route };
+        const int routes[NumSendSources] { p.osc[0].route, p.osc[1].route, p.sub.route, p.noise.route, p.tex.route };
         for (int bus = 0; bus < NumBuses; ++bus)
         {
             if (! base.busActive[bus]) continue;
             // ---- routage vers les filtres (pondéré par l'envoi de chaque source vers ce bus)
             float f1[2] {}, f2[2] {}, direct[2] {};
-            for (int s = 0; s < 4; ++s)
+            for (int s = 0; s < NumSendSources; ++s)
             {
                 const float w = lvl[s] * base.send[s][bus];
                 if (w <= 0.0f) continue;
@@ -376,6 +412,7 @@ void Voice::render (float* const* busL, float* const* busR, int n, const VoicePa
                 outL = f1[0] + f2[0] + direct[0];
                 outR = f1[1] + f2[1] + direct[1];
             }
+            fpf[bus].process (outL, outR); // empreinte spectrale (si active)
             busL[bus][i] += outL * g;
             busR[bus][i] += outR * g;
         }

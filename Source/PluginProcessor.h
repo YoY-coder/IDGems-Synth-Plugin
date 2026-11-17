@@ -49,6 +49,8 @@ public:
     /** Fichiers glissés sur un oscillateur : en mode Wavetable, le sample est découpé en wavetable ;
         en mode Sample / Multisample, il est chargé tel quel. Renvoie un message (vide si tout va bien). */
     juce::String dropFiles (int osc, const juce::Array<juce::File>& files);
+    /** Emplacements de sons : 0-1 = Osc A / B, puis Texture son 1, son 2, empreinte, fichier data bending. */
+    enum AssetSlot { AssetTex1 = 2, AssetTex2 = 3, AssetFingerprint = 4, AssetData = 5, NumAssetSlots = 6 };
     /** Bouton dé : nouvelle wavetable aléatoire. */
     void randomTable (int osc);
     /** Crayon : remplace la table de l'oscillateur par ces cycles (Size échantillons par frame). */
@@ -104,6 +106,7 @@ private:
     void readParams (idgs::VoiceParams& p) const;
     void setTable (int osc, std::unique_ptr<idgs::Wavetable> t);
     void setSamples (int osc, std::unique_ptr<idgs::SampleSet> s, const juce::Array<juce::File>& files);
+    std::unique_ptr<idgs::SampleSet> loadSlot (int slot, const juce::Array<juce::File>& files, juce::String& error);
     void retire (std::shared_ptr<void> p);
 
     idgs::SynthEngine engine;
@@ -144,7 +147,7 @@ private:
         std::shared_ptr<idgs::Wavetable> tableOwner;
         std::shared_ptr<idgs::SampleSet> samplesOwner;
         juce::Array<juce::File> files;
-    } assets[idgs::NumOscs];
+    } assets[6];
     std::vector<std::pair<double, std::shared_ptr<void>>> retired;
 
     // pointeurs vers les valeurs brutes des paramètres (lecture sans verrou)
@@ -154,6 +157,7 @@ private:
             *spread, *stretch, *shift, *warp[2], *warpAmt[2], *warpSrc[2], *loop, *root, *route;
     } oscRaw[idgs::NumOscs] {};
     struct FiltRaw { std::atomic<float>* on, *type, *cutoff, *reso, *drive, *key, *mix; } filtRaw[2] {};
+    std::vector<std::atomic<float>*> texRaw;  // ordre : voir texKeys() dans PluginProcessor.cpp
     struct Raw
     {
         std::atomic<float>* subOn, *subShape, *subOct, *subLevel, *subPan, *subRoute, *noiseOn, *noiseType, *noiseLevel,

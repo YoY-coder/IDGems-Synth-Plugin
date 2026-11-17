@@ -18,7 +18,12 @@ double divisionBeats (int i)
     return b[juce::jlimit (0, 15, i)];
 }
 
-const juce::StringArray& oscModeNames() { static const juce::StringArray n { "Wavetable", "Sample", "Multisample" }; return n; }
+const juce::StringArray& oscModeNames() { static const juce::StringArray n { "Wavetable", "Sample", "Multisample", "Granulaire", "Spectral" }; return n; }
+const juce::StringArray& texEngineNames()
+{
+    static const juce::StringArray n { "Granulaire", "Spectral", "Chaos", IDG_T ("Résonateur"), IDG_T ("Bruit sculpté"), "Data bending" };
+    return n;
+}
 const juce::StringArray& warpNames()
 {
     static const juce::StringArray n { "Off", "Sync", "Bend +", "Bend -", "PWM", "Asym +", "Asym -", "Flip", "Mirror",
@@ -219,6 +224,50 @@ juce::String helpFor (const juce::String& fullId)
     auto it = h.find (id);
     if (it != h.end()) return it->second;
     if (id.startsWith ("send_")) return IDG_T ("Niveau d'envoi de cette source vers ce bus d'effets.");
+    if (id.startsWith ("tex_") || id.startsWith ("fp_"))
+    {
+        static const std::map<juce::String, juce::String> th {
+            { "tex_on", IDG_T ("Active l'Osc Texture (matière sonore : granulaire, spectral, chaos, résonateur, bruit, data bending).") },
+            { "tex_engine1", IDG_T ("Premier moteur de l'Osc Texture.") },
+            { "tex_engine2", IDG_T ("Second moteur : le Morph fond progressivement le moteur 1 dans le moteur 2.") },
+            { "tex_morph", IDG_T ("Fondu entre le moteur 1 (0 %) et le moteur 2 (100 %). Modulable.") },
+            { "tex_g_pos", IDG_T ("Granulaire : position de lecture dans le son (ou retard dans le flux live).") },
+            { "tex_g_size", IDG_T ("Granulaire : durée de chaque grain.") },
+            { "tex_g_density", IDG_T ("Granulaire : nombre de grains par seconde.") },
+            { "tex_g_spray", IDG_T ("Granulaire : dispersion aléatoire de la position des grains.") },
+            { "tex_g_pitchrand", IDG_T ("Granulaire : hauteur aléatoire par grain (demi-tons).") },
+            { "tex_g_panrand", IDG_T ("Granulaire : panoramique aléatoire par grain.") },
+            { "tex_g_reverse", IDG_T ("Granulaire : probabilité qu'un grain soit lu à l'envers.") },
+            { "tex_g_shape", IDG_T ("Granulaire : enveloppe des grains (doux -> carré).") },
+            { "tex_g_freeze", IDG_T ("Granulaire : fige la source (flux live) / la position.") },
+            { "tex_g_source", IDG_T ("Granulaire : grains pris dans le son chargé, ou dans la sortie live des Osc A et B.") },
+            { "tex_s_freeze", IDG_T ("Spectral : fige le spectre courant.") },
+            { "tex_s_speed", IDG_T ("Spectral : vitesse de lecture du son (0 = immobile).") },
+            { "tex_s_smear", IDG_T ("Spectral : étale le spectre dans le temps (traînées).") },
+            { "tex_s_shift", IDG_T ("Spectral : décale toutes les fréquences (inharmonique).") },
+            { "tex_s_stretch", IDG_T ("Spectral : étire / compresse le spectre.") },
+            { "tex_s_harm", IDG_T ("Spectral : filtre d'harmoniques (ne garde que les harmoniques de la note).") },
+            { "tex_s_morph", IDG_T ("Spectral : morph entre le son 1 et le son 2.") },
+            { "tex_s_scramble", IDG_T ("Spectral : bin scramble, mélange des fréquences.") },
+            { "tex_c_type", IDG_T ("Chaos : équation (Lorenz, logistique, Hénon), instable mais continue.") },
+            { "tex_c_amount", IDG_T ("Chaos : intensité du désordre.") },
+            { "tex_r_type", IDG_T ("Résonateur : corde (Karplus-Strong), métal ou verre.") },
+            { "tex_r_decay", IDG_T ("Résonateur : durée de résonance.") },
+            { "tex_r_exciter", IDG_T ("Résonateur : excitation par une impulsion de bruit, un bruit continu ou l'Osc A.") },
+            { "tex_n_color", IDG_T ("Bruit sculpté : couleur (sombre <-> brillant).") },
+            { "tex_n_density", IDG_T ("Bruit sculpté : densité (grésillements épars <-> bruit plein).") },
+            { "tex_n_crackle", IDG_T ("Bruit sculpté : craquements.") },
+            { "tex_n_focus", IDG_T ("Bruit sculpté : concentre le bruit sur la hauteur de la note.") },
+            { "tex_d_offset", IDG_T ("Data bending : position de départ dans le fichier.") },
+            { "tex_d_format", IDG_T ("Data bending : lecture des octets en 8 ou 16 bits.") },
+            { "fp_on", IDG_T ("Empreinte spectrale : l'enveloppe spectrale d'un son (voix, objet) est plaquée sur le synthé, façon vocoder.") },
+            { "fp_amount", IDG_T ("Empreinte : quantité.") },
+            { "fp_res", IDG_T ("Empreinte : résolution (nombre de bandes).") },
+            { "fp_shift", IDG_T ("Empreinte : décalage des formants.") },
+            { "fp_speed", IDG_T ("Empreinte : vitesse de lecture de l'empreinte.") } };
+        auto it2 = th.find (id);
+        return it2 == th.end() ? IDG_T ("Réglage de l'Osc Texture.") : it2->second;
+    }
     if (id.contains ("_to_")) return IDG_T ("Envoi de ce bus vers un autre bus (les boucles sont automatiquement évitées).");
     if (id.startsWith ("bus_")) return IDG_T ("Réglage du bus d'effets.");
     return {};
@@ -345,8 +394,69 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     B.f (P::velSens, "Velocity Sens", 0.0f, 1.0f, 0.7f, pctText);
     B.i (P::bendRange, "Bend Range", 0, 24, 2);
 
+    // ---- Osc Texture (6 moteurs, fondu de l'un à l'autre)
+    {
+        auto T = [] (const char* k) { return texId (k); };
+        B.b (T ("on"), "Texture On", false);
+        B.c (T ("engine1"), "Texture Engine 1", texEngineNames(), TexGranular);
+        B.c (T ("engine2"), "Texture Engine 2", texEngineNames(), TexChaos);
+        B.f (T ("morph"), "Texture Morph", 0.0f, 1.0f, 0.0f, pctText);
+        B.f (T ("level"), "Texture Level", 0.0f, 1.0f, 0.6f, pctText);
+        B.f (T ("pan"), "Texture Pan", -1.0f, 1.0f, 0.0f, panText);
+        B.i (T ("oct"), "Texture Octave", -4, 4, 0);
+        B.i (T ("semi"), "Texture Semi", -12, 12, 0);
+        B.c (T ("route"), "Texture Route", routeNames(), RouteF1);
+        B.i (T ("root"), "Texture Root", 0, 127, 60, [] (int v, int) { return noteText (v); });
+        // granulaire
+        B.f (T ("g_pos"), "Grain Position", 0.0f, 1.0f, 0.3f, pctText);
+        B.f (T ("g_size"), "Grain Size", 5.0f, 1000.0f, 90.0f, msText, 100.0f, "ms");
+        B.f (T ("g_density"), "Grain Density", 1.0f, 200.0f, 25.0f, [] (float v, int) { return juce::String (v, 1) + " /s"; }, 25.0f);
+        B.f (T ("g_spray"), "Grain Spray", 0.0f, 1.0f, 0.15f, pctText);
+        B.f (T ("g_pitchrand"), "Grain Pitch Rand", 0.0f, 24.0f, 0.0f, [] (float v, int) { return juce::String (v, 1) + " st"; }, -1.0f, "st");
+        B.f (T ("g_panrand"), "Grain Pan Rand", 0.0f, 1.0f, 0.4f, pctText);
+        B.f (T ("g_reverse"), "Grain Reverse Prob", 0.0f, 1.0f, 0.0f, pctText);
+        B.f (T ("g_shape"), "Grain Shape", 0.0f, 1.0f, 0.0f, pctText);
+        B.b (T ("g_freeze"), "Grain Freeze", false);
+        B.c (T ("g_source"), "Grain Source", { "Sample", "Osc A + B (live)" }, 0);
+        // spectral
+        B.b (T ("s_freeze"), "Spectral Freeze", false);
+        B.f (T ("s_speed"), "Spectral Speed", 0.0f, 4.0f, 1.0f, [] (float v, int) { return "x" + juce::String (v, 2); }, 1.0f);
+        B.f (T ("s_smear"), "Spectral Smear", 0.0f, 0.99f, 0.0f, pctText);
+        B.f (T ("s_shift"), "Spectral Shift", -2000.0f, 2000.0f, 0.0f, hzText, -1.0f, "Hz");
+        B.f (T ("s_stretch"), "Spectral Stretch", 0.25f, 4.0f, 1.0f, [] (float v, int) { return "x" + juce::String (v, 2); }, 1.0f);
+        B.f (T ("s_harm"), "Spectral Harmonic Filter", 0.0f, 1.0f, 0.0f, pctText);
+        B.f (T ("s_morph"), "Spectral Morph", 0.0f, 1.0f, 0.0f, pctText);
+        B.f (T ("s_scramble"), "Spectral Scramble", 0.0f, 1.0f, 0.0f, pctText);
+        // chaos
+        B.c (T ("c_type"), "Chaos Type", { "Lorenz", "Logistique", IDG_T ("Hénon") }, 0);
+        B.f (T ("c_amount"), "Chaos Amount", 0.0f, 1.0f, 0.5f, pctText);
+        B.f (T ("c_rate"), "Chaos Rate", 0.1f, 4.0f, 1.0f, [] (float v, int) { return "x" + juce::String (v, 2); }, 1.0f);
+        // résonateur
+        B.c (T ("r_type"), "Resonator Type", { "Corde", IDG_T ("Métal"), "Verre" }, 0);
+        B.f (T ("r_decay"), "Resonator Decay", 0.0f, 1.0f, 0.7f, pctText);
+        B.f (T ("r_bright"), "Resonator Brightness", 0.0f, 1.0f, 0.5f, pctText);
+        B.c (T ("r_exciter"), "Resonator Exciter", { "Bruit (impulsion)", "Bruit continu", "Osc A" }, 0);
+        B.f (T ("r_excite"), "Resonator Excite Level", 0.0f, 1.0f, 0.5f, pctText);
+        // bruit sculpté
+        B.f (T ("n_color"), "Noise Color", -1.0f, 1.0f, 0.0f, bipolarPct);
+        B.f (T ("n_density"), "Noise Density", 0.0f, 1.0f, 1.0f, pctText);
+        B.f (T ("n_crackle"), "Noise Crackle", 0.0f, 1.0f, 0.0f, pctText);
+        B.f (T ("n_focus"), "Noise Pitch Focus", 0.0f, 1.0f, 0.0f, pctText);
+        // data bending
+        B.f (T ("d_offset"), "Data Offset", 0.0f, 1.0f, 0.0f, pctText);
+        B.c (T ("d_format"), "Data Format", { "8 bits", "16 bits" }, 0);
+        B.f (T ("d_rate"), "Data Rate", 0.05f, 4.0f, 1.0f, [] (float v, int) { return "x" + juce::String (v, 2); }, 1.0f);
+        // empreinte spectrale
+        B.b ("fp_on", "Fingerprint On", false);
+        B.f ("fp_amount", "Fingerprint Amount", 0.0f, 1.0f, 0.8f, pctText);
+        B.c ("fp_res", "Fingerprint Resolution", { "8 bandes", "16 bandes", "32 bandes" }, 1);
+        B.f ("fp_shift", "Fingerprint Formant Shift", -12.0f, 12.0f, 0.0f, [] (float v, int) { return juce::String (v, 1) + " bandes"; });
+        B.f ("fp_speed", "Fingerprint Speed", 0.0f, 4.0f, 1.0f, [] (float v, int) { return "x" + juce::String (v, 2); }, 1.0f);
+        B.b ("fp_loop", "Fingerprint Loop", true);
+    }
+
     // ---- Envois des sources vers les bus (par défaut : tout dans le bus A)
-    static const char* srcNames[] { "Osc A", "Osc B", "Sub", "Noise" };
+    static const char* srcNames[] { "Osc A", "Osc B", "Sub", "Noise", "Texture" };
     for (int src = 0; src < NumSendSources; ++src)
         for (int b = 0; b < NumBuses; ++b)
             B.f (sendId (src, b), juce::String (srcNames[src]) + " -> Bus " + juce::String::charToString ((juce::juce_wchar) ('A' + b)),

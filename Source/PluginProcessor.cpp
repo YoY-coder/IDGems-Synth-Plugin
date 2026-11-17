@@ -3,6 +3,21 @@
 
 using namespace idgs;
 
+namespace
+{
+const std::vector<juce::String>& texKeys()
+{
+    static const std::vector<juce::String> k {
+        "tex_on", "tex_engine1", "tex_engine2", "tex_morph", "tex_level", "tex_pan", "tex_oct", "tex_semi", "tex_route", "tex_root",
+        "tex_g_pos", "tex_g_size", "tex_g_density", "tex_g_spray", "tex_g_pitchrand", "tex_g_panrand", "tex_g_reverse", "tex_g_shape",
+        "tex_g_freeze", "tex_g_source", "tex_s_freeze", "tex_s_speed", "tex_s_smear", "tex_s_shift", "tex_s_stretch", "tex_s_harm",
+        "tex_s_morph", "tex_s_scramble", "tex_c_type", "tex_c_amount", "tex_c_rate", "tex_r_type", "tex_r_decay", "tex_r_bright",
+        "tex_r_exciter", "tex_r_excite", "tex_n_color", "tex_n_density", "tex_n_crackle", "tex_n_focus", "tex_d_offset", "tex_d_format",
+        "tex_d_rate", "fp_on", "fp_amount", "fp_res", "fp_shift", "fp_speed", "fp_loop" };
+    return k;
+}
+} // namespace
+
 IDGemsSynthProcessor::IDGemsSynthProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Sortie", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "IDGemsSynth", createLayout())
@@ -30,6 +45,7 @@ IDGemsSynthProcessor::IDGemsSynthProcessor()
         x.on = r (filtId (f, "on")); x.type = r (filtId (f, "type")); x.cutoff = r (filtId (f, "cutoff")); x.reso = r (filtId (f, "reso"));
         x.drive = r (filtId (f, "drive")); x.key = r (filtId (f, "key")); x.mix = r (filtId (f, "mix"));
     }
+    for (auto& k : texKeys()) texRaw.push_back (r (k));
     raw.subOn = r (P::subOn); raw.subShape = r (P::subShape); raw.subOct = r (P::subOct); raw.subLevel = r (P::subLevel);
     raw.subPan = r (P::subPan); raw.subRoute = r (P::subRoute);
     raw.noiseOn = r (P::noiseOn); raw.noiseType = r (P::noiseType); raw.noiseLevel = r (P::noiseLevel); raw.noisePan = r (P::noisePan);
@@ -160,6 +176,30 @@ void IDGemsSynthProcessor::readParams (VoiceParams& p) const
         op.loop = x.loop->load() > 0.5f;
         op.root = (int) x.root->load();
         op.route = (int) x.route->load();
+    }
+    {
+        // Osc Texture + empreinte (ordre de texKeys())
+        int k = 0;
+        auto v = [this, &k] { return texRaw[(size_t) k++]->load(); };
+        auto& t = p.tex;
+        t.on = v() > 0.5f; t.engine[0] = (int) v(); t.engine[1] = (int) v(); t.morph = v(); t.level = v(); t.pan = v();
+        const float oct = std::round (v()), semi = std::round (v());
+        t.pitch = oct * 12.0f + semi; t.route = (int) v(); t.root = (int) v();
+        t.gPos = v(); t.gSize = v(); t.gDensity = v(); t.gSpray = v(); t.gPitchRand = v(); t.gPanRand = v(); t.gReverse = v();
+        t.gShape = v(); t.gFreeze = v() > 0.5f; t.gSource = (int) v();
+        t.sFreeze = v() > 0.5f; t.sSpeed = v(); t.sSmear = v(); t.sShift = v(); t.sStretch = v(); t.sHarm = v(); t.sMorph = v();
+        t.sScramble = v();
+        t.cType = (int) v(); t.cAmount = v(); t.cRate = v();
+        t.rType = (int) v(); t.rDecay = v(); t.rBright = v(); t.rExciter = (int) v(); t.rExcite = v();
+        t.nColor = v(); t.nDensity = v(); t.nCrackle = v(); t.nFocus = v();
+        t.dOffset = v(); t.dFormat = (int) v(); t.dRate = v();
+        t.sound1 = assets[AssetTex1].samples.load();
+        t.sound2 = assets[AssetTex2].samples.load();
+        t.data = assets[AssetData].samples.load();
+        auto& f = p.fp;
+        f.on = v() > 0.5f; f.amount = v(); f.res = (int) v(); f.shift = v(); f.speed = v(); f.loop = v() > 0.5f;
+        f.fp = assets[AssetFingerprint].samples.load();
+        for (auto& o : p.osc) o.tex = &p.tex;
     }
     p.sub.on = raw.subOn->load() > 0.5f;
     p.sub.shape = (int) raw.subShape->load();
@@ -559,6 +599,18 @@ void IDGemsSynthProcessor::timerCallback()
     // destruction différée des tables / samples remplacés (le thread audio ne les lit plus)
     const double now = juce::Time::getMillisecondCounterHiRes();
     retired.erase (std::remove_if (retired.begin(), retired.end(), [now] (auto& e) { return now - e.first > 2000.0; }), retired.end());
+    // passage d'un osc en mode Spectral après chargement du son : analyse spectrale à la volée
+    for (int o = 0; o < NumOscs; ++o)
+    {
+        const auto* set = assets[o].samples.load();
+        if (set != nullptr && ! set->zones.empty() && set->zones[0]->spectral == nullptr
+            && (int) getValue (oscId (o, "mode")) == ModeSpectral && ! assets[o].files.isEmpty())
+        {
+            juce::String error;
+            auto files = assets[o].files;
+            setSamples (o, loadSlot (o, files, error), files);
+        }
+    }
 }
 
 void IDGemsSynthProcessor::setTable (int osc, std::unique_ptr<Wavetable> t)
@@ -583,9 +635,42 @@ void IDGemsSynthProcessor::setSamples (int osc, std::unique_ptr<SampleSet> s, co
     ++assetsVersion;
 }
 
+std::unique_ptr<SampleSet> IDGemsSynthProcessor::loadSlot (int slot, const juce::Array<juce::File>& files, juce::String& error)
+{
+    if (files.isEmpty()) return nullptr;
+    if (slot == AssetData) return SampleSet::loadRaw (files[0], error);
+    if (slot >= NumOscs)
+    {
+        auto set = SampleSet::load (files, false, error);
+        if (set == nullptr) return nullptr;
+        if (slot == AssetFingerprint) set->computeFingerprint();
+        else set->computeSpectral();
+        return set;
+    }
+    const int mode = (int) getValue (oscId (slot, "mode"));
+    auto set = SampleSet::load (files, mode == ModeMulti || files.size() > 1, error);
+    if (set != nullptr && mode == ModeSpectral && set->zones.size() <= 4) set->computeSpectral();
+    return set;
+}
+
 juce::String IDGemsSynthProcessor::dropFiles (int osc, const juce::Array<juce::File>& files)
 {
     if (files.isEmpty()) return {};
+    if (osc >= NumOscs)
+    {
+        // Texture (sons 1 / 2), empreinte spectrale, fichier data bending
+        juce::String error;
+        auto set = loadSlot (osc, files, error);
+        if (set == nullptr) return error;
+        juce::Array<juce::File> list;
+        for (auto& z : set->zones) list.add (z->file);
+        const auto msg = set->name;
+        if (osc == AssetTex1)
+            if (const int note = SampleSet::noteFromName (set->zones[0]->file.getFileNameWithoutExtension()); note >= 0)
+                setValue (texId ("root"), (float) note);
+        setSamples (osc, std::move (set), list);
+        return msg;
+    }
     const int mode = (int) getValue (oscId (osc, "mode"));
     juce::String error;
     if (mode == ModeWavetable)
@@ -601,9 +686,9 @@ juce::String IDGemsSynthProcessor::dropFiles (int osc, const juce::Array<juce::F
         setTable (osc, std::move (t));
         return msg;
     }
-    auto set = SampleSet::load (files, mode == ModeMulti, error);
+    auto set = loadSlot (osc, files, error);
     if (set == nullptr) return error;
-    if (mode == ModeSample)
+    if (mode != ModeMulti)
     {
         const int note = SampleSet::noteFromName (set->zones[0]->file.getFileNameWithoutExtension());
         if (note >= 0) setValue (oscId (osc, "root"), (float) note);
@@ -636,10 +721,15 @@ const Wavetable& IDGemsSynthProcessor::displayTable (int osc) const
 
 juce::String IDGemsSynthProcessor::assetName (int osc) const
 {
+    if (osc >= NumOscs)
+    {
+        const auto* s = assets[osc].samples.load();
+        return s != nullptr ? s->name : IDG_T ("(glisse un fichier ici)");
+    }
     const int mode = (int) getValue (oscId (osc, "mode"));
     if (mode == ModeWavetable) return displayTable (osc).getName();
     const auto* s = assets[osc].samples.load();
-    return s != nullptr ? s->name : IDG_T ("(glisse un fichier audio ici)");
+    return s != nullptr ? s->name : IDG_T ("(glisse un fichier ici)");
 }
 
 // =============================================================================
@@ -653,11 +743,11 @@ juce::ValueTree IDGemsSynthProcessor::captureState()
 #endif
     if (presets != nullptr) state.setProperty ("presetName", presets->currentName(), nullptr);
     juce::ValueTree extra ("Assets");
-    for (int o = 0; o < NumOscs; ++o)
+    for (int o = 0; o < NumAssetSlots; ++o)
     {
         juce::ValueTree a ("Osc");
         a.setProperty ("index", o, nullptr);
-        if (auto* t = assets[o].tableOwner.get())
+        if (auto* t = o < NumOscs ? assets[o].tableOwner.get() : nullptr)
         {
             // la table personnalisée est sauvée avec le projet (cycles bruts, frame complète)
             juce::MemoryBlock mb;
@@ -769,6 +859,16 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
                 rp->setValueNotifyingHost (rp->getDefaultValue());
     apvts.replaceState (copy);
 
+    for (int o = NumOscs; o < NumAssetSlots; ++o)
+    {
+        auto a = extra.getChildWithProperty ("index", o);
+        juce::Array<juce::File> files;
+        if (a.isValid())
+            for (auto& path : juce::StringArray::fromTokens (a.getProperty ("samples").toString(), "|", ""))
+                if (path.isNotEmpty()) files.add (juce::File (path));
+        juce::String error;
+        setSamples (o, files.isEmpty() ? nullptr : loadSlot (o, files, error), files);
+    }
     for (int o = 0; o < NumOscs; ++o)
     {
         auto a = extra.getChildWithProperty ("index", o);
@@ -800,7 +900,7 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree)
         if (! files.isEmpty())
         {
             juce::String error;
-            set = SampleSet::load (files, (int) getValue (oscId (o, "mode")) == ModeMulti || files.size() > 1, error);
+            set = loadSlot (o, files, error);
         }
         setSamples (o, std::move (set), files);
     }
@@ -821,7 +921,7 @@ void IDGemsSynthProcessor::resetToInit()
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             rp->setValueNotifyingHost (rp->getDefaultValue());
-    for (int o = 0; o < NumOscs; ++o)
+    for (int o = 0; o < NumAssetSlots; ++o)
     {
         setSamples (o, nullptr, {});
         auto& as = assets[o];

@@ -43,7 +43,7 @@ RoutingPanel::RoutingPanel (IDGemsSynthProcessor& p) : proc (p)
 void RoutingPanel::paint (juce::Graphics& g)
 {
     frame (g, getLocalBounds(), "Routage  //  sources -> bus -> master", Theme::accent);
-    static const char* names[] { "OSC A", "OSC B", "SUB", "NOISE" };
+    static const char* names[] { "OSC A", "OSC B", "SUB", "NOISE", "TEXTURE" };
     g.setFont (Theme::mono (10.0f, true));
     for (int s = 0; s < NumSendSources; ++s)
     {

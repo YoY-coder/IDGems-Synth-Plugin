@@ -37,6 +37,8 @@ enum ModField
     FFilt0, // + f * NumFiltFields + k
     NumFiltFields = 5,
     FEnvAttack = FFilt0 + 2 * NumFiltFields, FEnvDecay, FEnvSustain, FEnvRelease, FGlide,
+    FTexLevel, FTexPan, FTexMorph, FTexGPos, FTexGSize, FTexGDensity, FTexGSpray, FTexSShift, FTexSStretch, FTexSSmear,
+    FTexCAmount, FTexRDecay, FTexRBright, FTexNColor, FTexDOffset, FFpAmount, FFpShift,
     NumModFields
 };
 enum FiltField { FFCutoff, FFReso, FFDrive, FFKey, FFMix };

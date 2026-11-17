@@ -18,7 +18,7 @@ void addAll (juce::Component& parent, std::initializer_list<juce::Component*> co
 
 const char* routeParamFor (int src)
 {
-    static const char* ids[] { "osca_route", "oscb_route", "sub_route", "noise_route" };
+    static const char* ids[] { "osca_route", "oscb_route", "sub_route", "noise_route", "tex_route" };
     return ids[src];
 }
 
@@ -104,8 +104,8 @@ void OscRow::updateVisibility()
     if (! wt) { pencil.setToggleState (false, juce::dontSendNotification); display.setPencil (false); }
     stretch.setVisible (wt);
     shift.setVisible (wt);
-    root.setVisible (m == ModeSample);
-    loop.setVisible (! wt);
+    root.setVisible (m == ModeSample || m == ModeGranular || m == ModeSpectral);
+    loop.setVisible (m == ModeSample || m == ModeMulti);
     resized();
     repaint();
 }
@@ -122,6 +122,13 @@ void OscRow::paintOverChildren (juce::Graphics& g)
     blockTitle (g, blocks[1], "WARP 1");
     blockTitle (g, blocks[2], "WARP 2");
     blockTitle (g, blocks[3], lastMode == ModeWavetable ? IDG_T ("PHASE / INHARM.") : "PHASE / SAMPLE");
+    if (lastMode == ModeGranular || lastMode == ModeSpectral)
+    {
+        g.setFont (Theme::mono (8.5f));
+        g.setColour (Theme::blue.withAlpha (0.8f));
+        g.drawText (IDG_T ("réglages fins : onglet TEXTURE"), display.getBounds().translated (0, display.getHeight() - 12).withHeight (12),
+                    juce::Justification::centredRight);
+    }
 }
 
 void OscRow::resized()
@@ -184,7 +191,7 @@ void OscRow::resized()
         auto r = blocks[3].withTrimmedTop (13);
         r = r.withTrimmedTop (r.getHeight() / 2);
         auto cell = root.isVisible() ? r.withTrimmedLeft (r.getWidth() / 2) : r;
-        loop.setBounds (cell.withSizeKeepingCentre (juce::jmin (60, cell.getWidth() - 4), 22));
+        if (loop.isVisible()) loop.setBounds (cell.withSizeKeepingCentre (juce::jmin (60, cell.getWidth() - 4), 22));
     }
 }
 
@@ -255,14 +262,14 @@ void RouteButtons::toggleSource (int src)
 void RouteButtons::mouseDown (const juce::MouseEvent& e)
 {
     const int c = cellAt (e.position.x);
-    if (c < 4) toggleSource (c);
+    if (c < NumSendSources) toggleSource (c);
     else setParam (proc, P::filtSerial, proc.getValue (P::filtSerial) < 0.5f ? 1.0f : 0.0f);
     repaint();
 }
 
 juce::String RouteButtons::getTooltip()
 {
-    if (hover == 4)
+    if (hover == NumSendSources)
         return IDG_T ("Chaînage : allumé = série (le filtre 1 entre dans le filtre 2), éteint = parallèle.");
     return IDG_T ("Allume / éteins les sources qui passent dans ce filtre. Une source dans aucun filtre sort en direct.");
 }
@@ -270,27 +277,27 @@ juce::String RouteButtons::getTooltip()
 void RouteButtons::tick()
 {
     float h = proc.getValue (P::filtSerial) * 97.0f;
-    for (int s = 0; s < 4; ++s) h += proc.getValue (routeParamFor (s)) * (float) (s * 13 + 1);
+    for (int s = 0; s < NumSendSources; ++s) h += proc.getValue (routeParamFor (s)) * (float) (s * 13 + 1);
     if (std::abs (h - lastHash) > 1.0e-4f) { lastHash = h; repaint(); }
 }
 
 void RouteButtons::paint (juce::Graphics& g)
 {
-    static const char* names[] { "OSC A", "OSC B", "SUB", "NOISE" };
+    static const char* names[] { "OSC A", "OSC B", "SUB", "NOISE", "TEX" };
     const float w = (float) getWidth() / NumCells;
     const bool serial = proc.getValue (P::filtSerial) < 0.5f;
     for (int i = 0; i < NumCells; ++i)
     {
         auto cell = juce::Rectangle<float> ((float) i * w, 0.0f, w, (float) getHeight()).reduced (2.0f, 1.0f);
-        const bool active = i < 4 ? sourceIn (i) : serial;
-        const auto c = i < 4 ? Theme::accent : Theme::blue;
+        const bool active = i < NumSendSources ? sourceIn (i) : serial;
+        const auto c = i < NumSendSources ? Theme::accent : Theme::blue;
         g.setColour (active ? c.withAlpha (0.22f) : (i == hover ? Theme::panelHi : Theme::bg.withAlpha (0.6f)));
         g.fillRoundedRectangle (cell, 3.0f);
         g.setColour (active ? c : Theme::line);
         g.drawRoundedRectangle (cell, 3.0f, 1.0f);
         g.setFont (Theme::mono (9.5f, active));
         g.setColour (active ? c.brighter (0.3f) : Theme::textDim);
-        const juce::String t = i < 4 ? juce::String (names[i]) : (filter == 0 ? juce::String ("-> F2") : juce::String ("F1 ->"));
+        const juce::String t = i < NumSendSources ? juce::String (names[i]) : (filter == 0 ? juce::String ("-> F2") : juce::String ("F1 ->"));
         g.drawText (t, cell, juce::Justification::centred);
     }
 }

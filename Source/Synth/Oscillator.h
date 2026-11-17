@@ -1,6 +1,7 @@
 #pragma once
 #include "Wavetable.h"
 #include "SampleData.h"
+#include "Texture.h"
 #include "../Core/Dsp.h"
 #include "../Core/Params.h"
 
@@ -24,6 +25,7 @@ struct OscParams
     int route = RouteF1;
     const Wavetable* table = nullptr;  // jamais nul quand la voix joue
     const SampleSet* samples = nullptr;
+    const TexParams* tex = nullptr;    // réglages granulaire / spectral (partagés avec l'Osc Texture)
 };
 
 /** Sinus tabulé (synthèse additive). */
@@ -62,6 +64,8 @@ public:
         sr = sampleRate;
         posCoef = 1.0f - std::exp (-1.0f / (0.004f * (float) sr));
         gainCoef = posCoef;
+        gran.prepare (sr, false);
+        spec.prepare (sr);
     }
 
     /** Début de note : phases (fixe + aléatoire), zone de sample, position de départ. */
@@ -87,6 +91,14 @@ public:
         }
         for (int u = 0; u < MaxUnison; ++u) ended[u] = false;
         firstControl = true;
+        gran.reset();
+        const SpectralData* d = spectralData (p);
+        spec.reset (d != nullptr ? p.pos * (double) (d->numFrames - 1) : 0.0);
+    }
+
+    static const SpectralData* spectralData (const OscParams& p)
+    {
+        return p.samples != nullptr && ! p.samples->zones.empty() ? p.samples->zones[0]->spectral.get() : nullptr;
     }
 
     /** Cadence de contrôle (toutes les 16 échantillons) : hauteurs, unison, choix des mipmaps, partiels. */
@@ -101,6 +113,8 @@ public:
             if (p.warp[w] == WarpHardSync) extra += p.warpAmt[w] * 36.0f; // l'esclave monte, la phase est remise à zéro par le maître
         }
         const float basePitch = notePitch + p.pitch + extra;
+        noteHzG = 440.0f * std::pow (2.0f, (basePitch - 69.0f) / 12.0f);
+        ratioG = std::pow (2.0f, (basePitch - (float) p.root) / 12.0f);
         const float det = p.detune * std::sqrt (p.detune); // ±1 demi-ton max, courbe douce
         float sumSq = 0.0f;
         float gains[MaxUnison];
@@ -195,7 +209,28 @@ public:
             if (hardSync) ph_[u] = 0.0f;
         }
 
-        if (p.mode == ModeWavetable && p.table != nullptr)
+        if (p.mode == ModeGranular || p.mode == ModeSpectral)
+        {
+            // granulaire / spectral : un seul flux (pas d'unison), réglages fins dans l'onglet Texture
+            static const TexParams defaults;
+            const TexParams& t = p.tex != nullptr ? *p.tex : defaults;
+            float l = 0.0f, r = 0.0f;
+            if (p.mode == ModeGranular)
+            {
+                const SampleZone* z = p.samples != nullptr && ! p.samples->zones.empty() ? p.samples->zones[0].get() : nullptr;
+                const GrainCloud::Settings gs { sPos, t.gSize, t.gDensity, t.gSpray, t.gPitchRand, t.gPanRand, t.gReverse, t.gShape, false };
+                gran.tick (gs, z, ratioG, rngG, l, r);
+            }
+            else
+            {
+                const SpectralVoice::Settings ss { t.sFreeze, t.sSpeed, t.sSmear, t.sShift, t.sStretch, t.sHarm, 0.0f, t.sScramble };
+                l = r = spec.tick (ss, spectralData (p), nullptr, ratioG, noteHzG, rngG);
+            }
+            const float pa = (juce::jlimit (-1.0f, 1.0f, p.pan) + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+            L = l * gw * std::cos (pa) * 1.4142f;
+            R = r * gw * std::sin (pa) * 1.4142f;
+        }
+        else if (p.mode == ModeWavetable && p.table != nullptr)
         {
             if (additive)
             {
@@ -375,6 +410,10 @@ private:
     }
 
     double sr = 44100.0;
+    GrainCloud gran;
+    SpectralVoice spec;
+    idg::dsp::Rng rngG;
+    float noteHzG = 261.6f, ratioG = 1.0f;
     int n = 1, renderCount = 1, mip = 0, zone = -1, numPartials = 32;
     float syncRatio = 1.0f, sPos = 0.0f, posCoef = 0.01f, gainCoef = 0.01f;
     bool additive = false, firstControl = true;
