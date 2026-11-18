@@ -3,30 +3,6 @@
 using namespace idgs::ui;
 using idg::ui::Theme;
 
-namespace
-{
-/** Page provisoire pour les onglets qui arrivent dans les phases suivantes. */
-class ComingSoonPage : public juce::Component
-{
-public:
-    ComingSoonPage (juce::String t, juce::StringArray l) : title (std::move (t)), lines (std::move (l)) {}
-    void paint (juce::Graphics& g) override
-    {
-        auto r = getLocalBounds().reduced (12, 10).toFloat();
-        Theme::panelFrame (g, r, Theme::textDim, 0.5f);
-        Theme::cutText (g, title, r.withTrimmedTop (r.getHeight() * 0.32f).withHeight (40.0f), 30.0f, Theme::accent,
-                        juce::Justification::centred, 0.5f, true);
-        g.setFont (Theme::mono (13.0f));
-        g.setColour (Theme::textDim);
-        auto t = r.withTrimmedTop (r.getHeight() * 0.32f + 60.0f);
-        for (auto& l : lines) g.drawText (l, t.removeFromTop (22.0f), juce::Justification::centredTop);
-    }
-
-private:
-    juce::String title;
-    juce::StringArray lines;
-};
-} // namespace
 
 struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAndDropContainer
 {
@@ -38,7 +14,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
           fx (p),
           mod (p),
           arp (p),
-          exp ("EXPORT", { IDG_T ("Phase 8 : enregistreur, rolling recorder, boucle Feed,"), IDG_T ("export WAV en glisser-déposer, batch render, Draft / HQ.") }),
+          exp (p),
           masterVol (p, idgs::P::masterVol, "Volume"),
           ceiling (p, idgs::P::ceiling, "Plafond", Theme::blue),
           meter (p),
@@ -50,6 +26,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
     {
         randomCluster.openPanel = [this] { randomPanel.open(); };
         randomPanel.flash = [this] (const juce::String& m) { flash (m); };
+        exp.flash = [this] (const juce::String& m) { flash (m); };
         addAndMakeVisible (randomCluster);
         // ---- barre de presets
         prevBtn.setTooltip (IDG_T ("Preset précédent"));
@@ -199,7 +176,7 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
     TexturePage tex;
     FxPage fx;
     PlayPage arp;
-    ComingSoonPage exp;
+    ExportPage exp;
     ModListPage mod;
     std::vector<juce::Component*> pages;
     juce::TextButton panicBtn;

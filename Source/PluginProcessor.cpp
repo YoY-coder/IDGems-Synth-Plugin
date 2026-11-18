@@ -144,6 +144,11 @@ void IDGemsSynthProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     masterGain.setCurrentAndTargetValue (idg::dsp::dbToGain (raw.masterVol->load()));
     panicMute = 0;
     panicGain = 1.0f;
+    if (! lightweight)
+    {
+        if (recorder == nullptr) recorder = std::make_unique<idg::Recorder>();
+        recorder->prepare (sr);
+    }
 }
 
 void IDGemsSynthProcessor::setValue (const juce::String& id, float realValue)
@@ -574,6 +579,8 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             }
         }
 
+        if (recorder != nullptr) recorder->push (mL, mR, len);
+
         if (buffer.getNumChannels() >= 2)
         {
             buffer.copyFrom (0, done, mL, len);
@@ -927,6 +934,18 @@ bool IDGemsSynthProcessor::busIsUsed (int bus) const
     return false;
 }
 
+idgs::MotionRecorder& IDGemsSynthProcessor::motionRecorder()
+{
+    if (motion == nullptr) motion = std::make_unique<idgs::MotionRecorder> (*this);
+    return *motion;
+}
+
+idgs::BatchRenderer& IDGemsSynthProcessor::batchRenderer()
+{
+    if (batch == nullptr) batch = std::make_unique<idgs::BatchRenderer> (*this);
+    return *batch;
+}
+
 idgs::RandomEngine& IDGemsSynthProcessor::randomEngine()
 {
     if (random == nullptr) random = std::make_unique<idgs::RandomEngine> (*this);
@@ -1001,6 +1020,7 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree, bool keepA
             if (! copy.getChildWithProperty ("id", rp->getParameterID()).isValid())
                 rp->setValueNotifyingHost (rp->getDefaultValue());
     copy.removeChild (copy.getChildWithName ("RANDOM"), nullptr);
+    copy.removeChild (copy.getChildWithName ("MOTION"), nullptr);
     apvts.replaceState (copy);
     if (keepAssets) return;
 
@@ -1081,6 +1101,7 @@ void IDGemsSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = captureState();
     if (random != nullptr) state.appendChild (random->toTree(), nullptr);
+    if (motion != nullptr && motion->hasData()) state.appendChild (motion->toTree(), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -1091,6 +1112,7 @@ void IDGemsSynthProcessor::setStateInformation (const void* data, int sizeInByte
         auto tree = juce::ValueTree::fromXml (*xml);
         restoreState (tree);
         if (auto rt = tree.getChildWithName ("RANDOM"); rt.isValid() || random != nullptr) randomEngine().fromTree (rt);
+        if (auto mt = tree.getChildWithName ("MOTION"); mt.isValid() || motion != nullptr) motionRecorder().fromTree (mt);
         if (presets != nullptr && tree.hasProperty ("presetName")) presets->setCurrentName (tree.getProperty ("presetName").toString());
     }
 }

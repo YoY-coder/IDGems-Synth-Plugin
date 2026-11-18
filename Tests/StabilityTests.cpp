@@ -1241,6 +1241,123 @@ int main (int argc, char** argv)
         }
     }
 
+
+    // 26. Création : enregistreur, rolling recorder, rendus (one-shot / loop / texture, HQ), batch, Feed, motion
+    if (onlyTest == 0 || onlyTest == 26)
+    {
+        std::cout << "26. Enregistreur / rendus / batch / feed / motion..." << std::endl;
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        auto readFile = [&fm] (const juce::File& f, double& rate) -> juce::AudioBuffer<float>
+        {
+            std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
+            if (r == nullptr) return {};
+            rate = r->sampleRate;
+            juce::AudioBuffer<float> b ((int) r->numChannels, (int) r->lengthInSamples);
+            r->read (&b, 0, (int) r->lengthInSamples, 0, true, true);
+            return b;
+        };
+        auto bufPeak = [] (const juce::AudioBuffer<float>& b)
+        {
+            float pk = 0.0f;
+            for (int c = 0; c < b.getNumChannels(); ++c)
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                {
+                    const float v = b.getSample (c, i);
+                    if (! std::isfinite (v)) return -1.0f;
+                    pk = juce::jmax (pk, std::abs (v));
+                }
+            return pk;
+        };
+        Harness h;
+        auto* rec = h.proc.getRecorder();
+        check (rec != nullptr, "enregistreur absent");
+        if (rec != nullptr)
+        {
+            check (rec->startRecording (120.0), "enregistrement : impossible de demarrer");
+            h.noteOn (60, 0.8f);
+            h.run (1.0);
+            h.noteOff (60);
+            h.run (0.3);
+            auto f = rec->stopRecording();
+            double rate = 0.0;
+            auto b = readFile (f, rate);
+            check (b.getNumSamples() > (int) (1.0 * h.sr) && bufPeak (b) > 0.01f, "enregistrement : fichier vide ou trop court");
+            f.deleteFile();
+            auto roll = rec->saveRolling (0.5f, 120.0);
+            b = readFile (roll, rate);
+            check (std::abs (b.getNumSamples() - (int) (0.5 * h.sr)) <= 1, "rolling recorder : longueur incorrecte");
+            // Feed : la prise redevient la source de la Texture
+            const auto msg = h.proc.dropFiles (IDGemsSynthProcessor::AssetTex1, { roll });
+            check (h.proc.currentSamples (IDGemsSynthProcessor::AssetTex1) != nullptr, "feed -> texture : son non charge (" + msg + ")");
+            roll.deleteFile();
+        }
+        // rendus hors ligne dans chaque mode
+        auto& br = h.proc.batchRenderer();
+        auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory);
+        for (int mode = 0; mode < 3; ++mode)
+        {
+            RenderSettings rs;
+            rs.mode = mode;
+            rs.bars = 1;
+            rs.textureSeconds = 3.0f;
+            rs.noteSeconds = 0.5f;
+            rs.hq = mode == 2;
+            rs.chord = mode == 1;
+            rs.bpm = 120.0;
+            const double t0 = juce::Time::getMillisecondCounterHiRes();
+            auto f = br.renderNow (rs, tmp.getChildFile ("idgs_render_" + juce::String (mode) + ".wav"));
+            const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
+            double rate = 0.0;
+            auto b = readFile (f, rate);
+            const float pk = bufPeak (b);
+            check (pk > 0.8f && pk < 0.95f, "rendu mode " + juce::String (mode) + " : crete " + juce::String (pk) + " (normalisation -1 dB)");
+            check (rate == (mode == 2 ? 96000.0 : 48000.0), "rendu mode " + juce::String (mode) + " : frequence " + juce::String (rate));
+            if (mode == 1) check (b.getNumSamples() == 96000, "loop 1 mesure a 120 bpm : " + juce::String (b.getNumSamples()) + " echantillons au lieu de 96000");
+            if (mode == 0) check (b.getNumSamples() < (int) (8.0 * 48000), "one-shot : la fin silencieuse n'est pas coupee");
+            std::cout << "    rendu mode " << mode << " : " << juce::String (ms, 0) << " ms" << std::endl;
+            f.deleteFile();
+        }
+        // batch : 2 variations random
+        {
+            RenderSettings rs;
+            rs.count = 2;
+            rs.noteSeconds = 0.25f;
+            rs.name = "test_batch";
+            check (br.start (rs), "batch : impossible de demarrer");
+            const double t0 = juce::Time::getMillisecondCounterHiRes();
+            while (br.isRunning() && juce::Time::getMillisecondCounterHiRes() - t0 < 120000.0)
+                br.step();
+            check (! br.isRunning() && br.files().size() == 2, "batch : " + juce::String (br.files().size()) + " fichier(s) au lieu de 2");
+            br.folder().deleteRecursively();
+        }
+        // motion recording : geste sur la macro 1, rejoué en boucle
+        {
+            auto& m = h.proc.motionRecorder();
+            m.record (1);
+            auto* mac = h.proc.apvts.getParameter (macroId (0));
+            for (int k = 0; k <= 16; ++k)
+            {
+                mac->setValueNotifyingHost ((float) k / 16.0f);
+                m.step (h.proc.getBeatPosition() + 0.25 * k);
+            }
+            m.step (h.proc.getBeatPosition() + 4.1); // fin de la boucle -> lecture
+            check (m.getState() == MotionRecorder::Playing && m.macroUsed (0) && ! m.macroUsed (1), "motion : pas de lecture apres l'enregistrement");
+            mac->setValueNotifyingHost (0.0f);
+            m.play();
+            const double base = std::floor (h.proc.getBeatPosition() / 4.0) * 4.0;
+            m.step (base + 2.0);
+            check (std::abs (mac->getValue() - 0.5f) < 0.08f, "motion : valeur rejouee " + juce::String (mac->getValue()) + " au lieu de 0.5");
+            juce::MemoryBlock mb;
+            h.proc.getStateInformation (mb);
+            Harness c;
+            c.proc.setStateInformation (mb.getData(), (int) mb.getSize());
+            check (c.proc.motionRecorder().hasData() && c.proc.motionRecorder().macroUsed (0), "motion : non restaure avec le projet");
+            c.proc.motionRecorder().clear();
+            m.clear();
+        }
+    }
+
     std::cout << (failures == 0 ? "=== TOUS LES TESTS PASSENT ===" : "=== " + juce::String (failures).toStdString() + " ECHEC(S) ===") << std::endl;
     return failures == 0 ? 0 : 1;
 }

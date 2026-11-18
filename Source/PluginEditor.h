@@ -7,6 +7,7 @@
 #include "UI/TexturePage.h"
 #include "UI/PlayPage.h"
 #include "UI/RandomUI.h"
+#include "UI/ExportPage.h"
 
 /** Interface d'IDGems Synth : barre du haut toujours visible, onglets façon Serum, clavier à l'écran.
     Redimensionnable : tout le contenu est dessiné à une taille de référence puis mis à l'échelle. */

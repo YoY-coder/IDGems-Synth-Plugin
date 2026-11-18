@@ -8,6 +8,9 @@
 #include "Fx/Sequencer.h"
 #include "Play/NoteGen.h"
 #include "State/RandomEngine.h"
+#include "State/MotionRecorder.h"
+#include "State/BatchRender.h"
+#include "Engine/Recorder.h"
 
 /** Processeur principal d'IDGems Synth. */
 class IDGemsSynthProcessor : public juce::AudioProcessor, private juce::Timer
@@ -49,6 +52,14 @@ public:
     /** Position en temps (noires) : celle de l'hôte quand il joue, sinon une horloge interne. */
     double getBeatPosition() const { return beatPos.load(); }
     bool isHostRunning() const { return hostRunning.load(); }
+    /** Motion recording des macros (créé à la première demande). */
+    idgs::MotionRecorder& motionRecorder();
+    /** Rendu hors ligne (batch, export glisser-déposer). */
+    idgs::BatchRenderer& batchRenderer();
+    /** Enregistreur de la sortie (nul pour les processeurs de calcul : sonde, rendu). */
+    idg::Recorder* getRecorder() { return recorder.get(); }
+    /** Processeur de calcul (sonde des garde-fous, rendu hors ligne) : pas d'enregistreur. */
+    void setLightweight() { lightweight = true; }
     /** Le bus reçoit-il au moins un envoi ? */
     bool busIsUsed (int bus) const;
     void resetToInit();
@@ -193,6 +204,10 @@ private:
     std::atomic<double> beatPos { 0.0 };
     std::atomic<bool> hostRunning { false };
     double freeBeats = 0.0;
+    bool lightweight = false;
+    std::unique_ptr<idg::Recorder> recorder;
+    std::unique_ptr<idgs::BatchRenderer> batch;
+    std::unique_ptr<idgs::MotionRecorder> motion;
     std::unique_ptr<idgs::RandomEngine> random; // en dernier : détruit en premier
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IDGemsSynthProcessor)

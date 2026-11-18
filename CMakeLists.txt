@@ -49,6 +49,9 @@ set(IDGS_DSP_SOURCES
     Source/Synth/SynthEngine.cpp
     Source/State/PresetManager.cpp
     Source/State/RandomEngine.cpp
+    Source/State/MotionRecorder.cpp
+    Source/State/BatchRender.cpp
+    Source/Engine/Recorder.cpp
     Source/Modulation/ModSystem.cpp
     Source/Modulation/ModEngine.cpp
     Source/Fx/ParamDefs.cpp
@@ -71,7 +74,8 @@ set(IDGS_UI_SOURCES
     Source/UI/FxPage.cpp
     Source/UI/TexturePage.cpp
     Source/UI/PlayPage.cpp
-    Source/UI/RandomUI.cpp)
+    Source/UI/RandomUI.cpp
+    Source/UI/ExportPage.cpp)
 
 # Police des titres (Michroma, licence SIL OFL : voir Resources/Fonts/OFL.txt)
 juce_add_binary_data(IDGemsSynthData SOURCES Resources/Fonts/Michroma-Regular.ttf)

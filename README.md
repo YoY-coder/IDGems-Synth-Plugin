@@ -18,7 +18,7 @@ de random, même DA, avec un moteur de synthèse en dessous. JUCE 8 / C++17 / CM
 | 5 | Osc Texture : granulaire, spectral, chaos, résonateur, data bending, empreinte spectrale | ✅ |
 | 6 | Jeu : arpé, séquenceur, **générateur de patterns MIDI**, gammes, mutation, export MIDI, Note Spray, micro-random | ✅ |
 | 7 | Random : niveaux, cadenas, seed, historique, morph pad, personnalités, garde-fous | ✅ |
-| 8 | Création : enregistreur, rolling recorder, Feed, export WAV, batch render, Draft/HQ | |
+| 8 | Création : enregistreur, rolling recorder, Feed, export WAV, batch render, Draft/HQ | ✅ |
 | 9 | Finitions : DA complète, undo/redo, A/B, MIDI learn, optimisation | |
 
 ## Notes pour les phases à venir

@@ -660,6 +660,7 @@ bool RandomEngine::guardMeasure (float& rmsDb, float& grDb)
     if (probe == nullptr)
     {
         probe = std::make_unique<IDGemsSynthProcessor>();
+        probe->setLightweight();
         probe->setPlayConfigDetails (0, 2, 44100.0, 512);
     }
     probe->restoreState (proc.captureState(), true);

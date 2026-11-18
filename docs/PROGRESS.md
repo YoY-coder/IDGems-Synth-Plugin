@@ -62,3 +62,13 @@ un retour global. À chaque phase : compiler en local, tests de stabilité, comm
   cadenas respectés) + `ParamBank::update` (effets) ; la macro CHAOS l'amplifie. UI `Source/UI/RandomUI.*`
   (gros dé + dosage dans la barre du haut, clic droit = tirage précédent ; panneau « ... » ; dés par bloc,
   par rack, par famille et par effet, clic droit = cadenas / random léger).
+- Phase 8 : faite. `Source/Engine/Recorder.*` (repris d'IDGems : rolling 60 s en mémoire + enregistrement WAV
+  24 bits sur un thread d'écriture ; Documents/IDGems Synth/Enregistrements), `Source/State/BatchRender.*`
+  (rendu hors ligne par tranches sur le thread de l'interface, processeur séparé « léger » qui partage les
+  tables / samples, tête de lecture factice au tempo ; One-shot = note + queue jusqu'au silence, Loop = préroll
+  1 mesure + N mesures, queue repliée au début = boucle sans couture, Texture = note longue + drift + fondus ;
+  Draft 48 kHz / HQ 96 kHz + suréchantillonnage ; normalisation -1 dB ; latence compensée ; batch = N
+  variations random, Documents/IDGems Synth/Rendus/<nom_date>), `Source/State/MotionRecorder.*` (gestes des
+  8 macros sur 1-16 mesures, rejoués en boucle au tempo, sauvés avec le projet), onglet `UI/ExportPage.*`
+  (glisser-déposer vers la DAW : dernier enregistrement ou rendu direct ; boucle Feed -> Osc A / Osc B /
+  Texture / Empreinte).
