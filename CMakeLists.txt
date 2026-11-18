@@ -121,6 +121,8 @@ if(IDGS_BUILD_TESTS)
     target_compile_definitions(IDGemsSynthTests PRIVATE ${IDGS_DEFINITIONS} IDGS_TESTS=1 JUCE_STANDALONE_APPLICATION=0)
     if(MSVC)
         target_compile_options(IDGemsSynthTests PRIVATE /utf-8)
+        # main() des tests : beaucoup de blocs ; pile de 8 Mo pour le seul exécutable de test
+        target_link_options(IDGemsSynthTests PRIVATE /STACK:8388608)
     endif()
     target_link_libraries(IDGemsSynthTests
         PRIVATE ${IDGS_JUCE_MODULES} IDGemsSynthData

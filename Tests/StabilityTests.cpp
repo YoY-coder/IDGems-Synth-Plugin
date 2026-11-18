@@ -15,7 +15,9 @@ void check (bool ok, const juce::String& what)
 
 struct Harness
 {
-    IDGemsSynthProcessor proc;
+    // sur le tas : la pile de Windows (1 Mo) ne supporte pas plusieurs processeurs dans main()
+    std::unique_ptr<IDGemsSynthProcessor> procPtr = std::make_unique<IDGemsSynthProcessor>();
+    IDGemsSynthProcessor& proc = *procPtr;
     double sr;
     int block;
     juce::AudioBuffer<float> buf;
@@ -91,7 +93,8 @@ float ceilingGain (Harness& h) { return idg::dsp::dbToGain (h.proc.getValue (P::
 /** Capture de l'interface en PNG (pour vérifier la mise en page sans hôte). */
 int snapshotMain (const juce::String& path, int tab)
 {
-    IDGemsSynthProcessor proc;
+    auto procPtr = std::make_unique<IDGemsSynthProcessor>();
+    auto& proc = *procPtr;
     proc.prepareToPlay (48000.0, 512);
     if (tab == 1) { proc.presets->load (2); }
     if (tab == 2) { auto* p = proc.apvts.getParameter ("oscb_mode"); p->setValueNotifyingHost (p->convertTo0to1 (1.0f)); }
@@ -1024,7 +1027,8 @@ int main (int argc, char** argv)
             }
             return ons;
         };
-        IDGemsSynthProcessor proc;
+        auto procPtr = std::make_unique<IDGemsSynthProcessor>();
+        auto& proc = *procPtr;
         auto hold = [] (juce::MidiBuffer& in, int b) { if (b == 0) { in.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0); in.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0); in.addEvent (juce::MidiMessage::noteOn (1, 67, 0.8f), 0); } };
         {
             PlaySettings ps; ps.mode = PlayArp; ps.arpRate = idgs::divisionNames().indexOf ("1/16");
