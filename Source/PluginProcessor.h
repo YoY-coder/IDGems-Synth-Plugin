@@ -10,6 +10,7 @@
 #include "State/RandomEngine.h"
 #include "State/MotionRecorder.h"
 #include "State/BatchRender.h"
+#include "State/UndoHistory.h"
 #include "Engine/Recorder.h"
 
 /** Processeur principal d'IDGems Synth. */
@@ -52,6 +53,18 @@ public:
     /** Position en temps (noires) : celle de l'hôte quand il joue, sinon une horloge interne. */
     double getBeatPosition() const { return beatPos.load(); }
     bool isHostRunning() const { return hostRunning.load(); }
+    /** Undo / redo + A / B (créé à la première demande). */
+    idgs::UndoHistory& undoHistory();
+    bool isMotionPlaying() const { return motion != nullptr && motion->getState() == idgs::MotionRecorder::Playing; }
+
+    // ---- MIDI learn : le prochain CC reçu est relié au paramètre demandé
+    void startMidiLearn (int paramIndex) { midiLearnParam.store (paramIndex); }
+    bool isLearning (int paramIndex) const { return midiLearnParam.load() == paramIndex; }
+    int ccForParam (int paramIndex) const { for (int c = 0; c < 128; ++c) if (ccMap[c].load() == paramIndex) return c; return -1; }
+    /** Applique les CC reçus aux paramètres reliés (appelé par le timer). */
+    void applyMidiControllers();
+    void forgetMidi (int paramIndex) { for (auto& c : ccMap) if (c.load() == paramIndex) c.store (-1); }
+
     /** Motion recording des macros (créé à la première demande). */
     idgs::MotionRecorder& motionRecorder();
     /** Rendu hors ligne (batch, export glisser-déposer). */
@@ -204,7 +217,13 @@ private:
     std::atomic<double> beatPos { 0.0 };
     std::atomic<bool> hostRunning { false };
     double freeBeats = 0.0;
+    int timerTicks = 0;
     bool lightweight = false;
+    std::atomic<int> midiLearnParam { -1 };
+    std::atomic<int> ccMap[128];
+    std::atomic<float> ccValue[128];
+    std::atomic<bool> ccDirty[128];
+    std::unique_ptr<idgs::UndoHistory> undo;
     std::unique_ptr<idg::Recorder> recorder;
     std::unique_ptr<idgs::BatchRenderer> batch;
     std::unique_ptr<idgs::MotionRecorder> motion;

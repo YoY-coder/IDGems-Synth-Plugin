@@ -184,6 +184,10 @@ public:
                 amp[k - 1] = wt.partialAmp (f0, k) + (wt.partialAmp (f1, k) - wt.partialAmp (f0, k)) * x;
                 phOff[k - 1] = wt.partialPhase (nearest, k);
             }
+            // optimisation : seuls les partiels audibles (amplitude non nulle, sous Nyquist pour la voix la plus aiguë) sont calculés
+            numActive = 0;
+            for (int k = 0; k < numPartials; ++k)
+                if (std::abs (amp[k]) > 1.0e-5f && maxInc * ratio[k] < 0.45f) active[numActive++] = (short) k;
         }
     }
 
@@ -240,13 +244,14 @@ public:
                     float s = 0.0f;
                     auto* ph = pph[u];
                     const float iu = inc[u];
-                    for (int k = 0; k < numPartials; ++k)
+                    for (int a = 0; a < numActive; ++a)
                     {
-                        const float pi = iu * ratio[k];
-                        float x = ph[k] + pi;
+                        const int k = active[a];
+                        float x = ph[k] + iu * ratio[k];
                         if (x >= 1.0f) x -= 1.0f;
+                        if (x < 0.0f) x += 1.0f;
                         ph[k] = x;
-                        if (pi < 0.45f) s += amp[k] * sine.wrapped (x + phOff[k]);
+                        s += amp[k] * sine.wrapped (x + phOff[k]);
                     }
                     if (hardSync) for (int k = 0; k < numPartials; ++k) ph[k] = 0.0f;
                     L += s * gL[u];
@@ -417,6 +422,8 @@ private:
     int n = 1, renderCount = 1, mip = 0, zone = -1, numPartials = 32;
     float syncRatio = 1.0f, sPos = 0.0f, posCoef = 0.01f, gainCoef = 0.01f;
     bool additive = false, firstControl = true;
+    short active[MaxPartials] {};
+    int numActive = 0;
     float ph_[MaxUnison] {}, inc[MaxUnison] {}, tL[MaxUnison] {}, tR[MaxUnison] {}, gL[MaxUnison] {}, gR[MaxUnison] {};
     double sp_[MaxUnison] {}, sinc[MaxUnison] {};
     bool ended[MaxUnison] {};

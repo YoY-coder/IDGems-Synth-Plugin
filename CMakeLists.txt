@@ -51,6 +51,7 @@ set(IDGS_DSP_SOURCES
     Source/State/RandomEngine.cpp
     Source/State/MotionRecorder.cpp
     Source/State/BatchRender.cpp
+    Source/State/UndoHistory.cpp
     Source/Engine/Recorder.cpp
     Source/Modulation/ModSystem.cpp
     Source/Modulation/ModEngine.cpp

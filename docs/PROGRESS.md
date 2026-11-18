@@ -72,3 +72,10 @@ un retour global. À chaque phase : compiler en local, tests de stabilité, comm
   8 macros sur 1-16 mesures, rejoués en boucle au tempo, sauvés avec le projet), onglet `UI/ExportPage.*`
   (glisser-déposer vers la DAW : dernier enregistrement ou rendu direct ; boucle Feed -> Osc A / Osc B /
   Texture / Empreinte).
+- Phase 9 : faite. `Source/State/UndoHistory.*` (instantanés : une étape par geste, validée au relâchement
+  de la souris, 60 étapes ; A / B = deux états complets), MIDI learn dans le processeur (CC reçus dans le
+  thread audio -> atomiques -> paramètres via le timer à 30 Hz ; sauvé avec le projet, MIDIMAP), raccourcis
+  clavier (`Content::handleKey`), DA réactive (logo qui se déchire avec le niveau, déchirure de l'interface à
+  chaque tirage / changement de preset, scope « corrompu » quand le son sature), clic droit potard = random +
+  MIDI learn + modulations. CPU : additif inharmonique limité aux partiels audibles (pire cas 198 % -> 66 %
+  du temps réel sur la machine de CI Linux). Tests 27.

@@ -1362,6 +1362,49 @@ int main (int argc, char** argv)
         }
     }
 
+
+    // 27. Finitions : undo / redo, A / B, MIDI learn
+    if (onlyTest == 0 || onlyTest == 27)
+    {
+        std::cout << "27. Undo / redo, A / B, MIDI learn..." << std::endl;
+        Harness h;
+        auto& u = h.proc.undoHistory();
+        auto norm = [&h] (const char* id) { return h.proc.apvts.getParameter (id)->getValue(); };
+        const float c0 = norm ("f1_cutoff");
+        h.set ("f1_cutoff", 500.0f);
+        u.commit();
+        const float c1 = norm ("f1_cutoff");
+        h.set ("f1_cutoff", 5000.0f);
+        u.commit();
+        u.undo();
+        check (std::abs (norm ("f1_cutoff") - c1) < 1.0e-5f, "undo : valeur precedente non restauree");
+        u.undo();
+        check (std::abs (norm ("f1_cutoff") - c0) < 1.0e-5f, "undo x2 : valeur initiale non restauree");
+        u.redo();
+        check (std::abs (norm ("f1_cutoff") - c1) < 1.0e-5f, "redo incorrect");
+        // A / B
+        u.selectSlot (1);
+        h.set ("f1_reso", 0.9f);
+        u.selectSlot (0);
+        const float rA = norm ("f1_reso");
+        u.selectSlot (1);
+        check (std::abs (norm ("f1_reso") - h.proc.apvts.getParameter ("f1_reso")->convertTo0to1 (0.9f)) < 1.0e-4f && std::abs (rA - norm ("f1_reso")) > 0.01f,
+               "A / B : les deux versions ne sont pas separees");
+        // MIDI learn
+        const int pi = h.proc.paramIndex ("osca_pos");
+        h.proc.startMidiLearn (pi);
+        h.midi.addEvent (juce::MidiMessage::controllerEvent (1, 21, 100), 0);
+        h.run (0.02);
+        h.proc.applyMidiControllers();
+        check (h.proc.ccForParam (pi) == 21, "MIDI learn : CC non relie");
+        check (std::abs (norm ("osca_pos") - 100.0f / 127.0f) < 0.01f, "MIDI learn : valeur non appliquee");
+        juce::MemoryBlock mb;
+        h.proc.getStateInformation (mb);
+        Harness c;
+        c.proc.setStateInformation (mb.getData(), (int) mb.getSize());
+        check (c.proc.ccForParam (pi) == 21, "MIDI learn : correspondance non restauree");
+    }
+
     std::cout << (failures == 0 ? "=== TOUS LES TESTS PASSENT ===" : "=== " + juce::String (failures).toStdString() + " ECHEC(S) ===") << std::endl;
     return failures == 0 ? 0 : 1;
 }

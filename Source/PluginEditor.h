@@ -21,6 +21,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
     void showTab (int index) { selectTab (index); }
     void showRandomPanel();
 

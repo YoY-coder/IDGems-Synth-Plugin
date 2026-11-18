@@ -32,6 +32,8 @@ Knob::Knob (IDGemsSynthProcessor& p, const juce::String& paramId, const juce::St
 
 juce::String Knob::getTooltip()
 {
+    const int cc = proc.ccForParam (paramIdx);
+    const juce::String ccText = cc >= 0 ? "\nMIDI : CC " + juce::String (cc) : juce::String();
     auto help = param != nullptr ? idgs::helpFor (param->getParameterID()) : juce::String();
     if (help.isEmpty() && param != nullptr)
         for (int k = 0; k < idg::NumRacks && help.isEmpty(); ++k)
@@ -40,7 +42,7 @@ juce::String Knob::getTooltip()
             const int i = reg.find (param->getParameterID());
             if (i >= 0) help = reg.all[(size_t) i].help;
         }
-    juce::String t = label + (help.isNotEmpty() ? "\n" + help : juce::String()) + IDG_T ("\nDouble-clic : valeur par défaut");
+    juce::String t = label + (help.isNotEmpty() ? "\n" + help : juce::String()) + ccText + IDG_T ("\nDouble-clic : valeur par défaut. Clic droit : random, MIDI learn");
     if (field >= 0)
     {
         juce::String mods;
@@ -58,7 +60,7 @@ void Knob::tick()
 {
     const float m = field >= 0 ? proc.modDisplay01 (paramIdx) : -1.0f;
     const int ver = proc.modShared.version.load(), hs = proc.uiHoverSource.load(), ds = proc.uiDragSource.load();
-    const int rv = proc.randomEngine().version.load();
+    const int rv = proc.randomEngine().version.load() + (proc.isLearning (paramIdx) ? 1000000 + (int) (juce::Time::getMillisecondCounter() / 300) % 2 : 0);
     if (std::abs (m - lastMod) > 0.002f || ver != lastVersion || hs != lastHoverSrc || ds != lastDragSrc || rv != lastRandVersion)
     {
         lastMod = m; lastVersion = ver; lastHoverSrc = hs; lastDragSrc = ds; lastRandVersion = rv;
@@ -147,7 +149,10 @@ void Knob::showModMenu()
         m.addSubMenu ("Plage de random : " + juce::String (juce::roundToInt (r.getStart() * 100.0f)) + " - "
                       + juce::String (juce::roundToInt (r.getEnd() * 100.0f)) + " %", rg);
     }
-    if (field < 0 && m.getNumItems() == 0) return;
+    m.addSectionHeader ("MIDI");
+    const int cc = proc.ccForParam (paramIdx);
+    m.addItem (8100, IDG_T ("MIDI learn : bouge un contrôleur de ton clavier"), true, proc.isLearning (paramIdx));
+    if (cc >= 0) m.addItem (8101, IDG_T ("Oublier le CC ") + juce::String (cc));
     if (field >= 0) m.addSectionHeader (IDG_T ("Modulations de « ") + label + IDG_T (" »"));
     int count = 0;
     for (int i = 0; i < (field >= 0 ? MaxModSlots : 0); ++i)
@@ -167,6 +172,8 @@ void Knob::showModMenu()
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe] (int r)
     {
         if (safe == nullptr || r <= 0) return;
+        if (r == 8100) { safe->proc.startMidiLearn (safe->proc.isLearning (safe->paramIdx) ? -1 : safe->paramIdx); safe->repaint(); return; }
+        if (r == 8101) { safe->proc.forgetMidi (safe->paramIdx); safe->repaint(); return; }
         if (r >= 8000 && r <= 8005)
         {
             auto& rnd = safe->proc.randomEngine();
@@ -229,6 +236,11 @@ void Knob::paint (juce::Graphics& g)
     {
         const auto rr = rnd.getRange (paramIdx);
         arc (radius + 0.5f, angleOf (rr.getStart()), angleOf (juce::jmax (rr.getEnd(), rr.getStart() + 0.01f)), juce::Colour (0xff3d9bff).withAlpha (0.9f * alpha), 1.6f);
+    }
+    if (proc.isLearning (paramIdx) && (juce::Time::getMillisecondCounter() / 300) % 2 == 0)
+    {
+        g.setColour (juce::Colour (0xff3ddc84));
+        g.drawEllipse (dial.expanded (2.0f), 2.0f);
     }
     if (rnd.isLocked (paramIdx))
     {
@@ -725,19 +737,44 @@ void Scope::paint (juce::Graphics& g)
     g.fillRect (r);
     g.setColour (Theme::line);
     g.drawHorizontalLine ((int) r.getCentreY(), r.getX(), r.getRight());
-    juce::Path p;
     const int n = (int) buf.size();
-    for (int i = 0; i < n; ++i)
+    float peak = 0.0f;
+    for (float v : buf) peak = juce::jmax (peak, std::abs (v));
+    // scope « corrompu » : plus le son est fort / saturé, plus l'image se déchire (tranches décalées, RGB séparé)
+    juce::Random rng ((juce::int64) juce::Time::getMillisecondCounter() / 50);
+    float corrupt = juce::jlimit (0.0f, 1.0f, (peak - 0.8f) * 5.0f);
+    if (rng.nextFloat() < 0.03f * Theme::glitchAmount) corrupt = juce::jmax (corrupt, 0.4f);
+    corrupt *= juce::jmin (1.0f, Theme::glitchAmount * 2.0f);
+    const int slice = 32;
+    juce::Path p;
+    for (int s0 = 0; s0 < n; s0 += slice)
     {
-        const float v = juce::jlimit (-1.0f, 1.0f, buf[(size_t) ((writePos + i) % n)]);
-        const float x = r.getX() + (float) i / (float) (n - 1) * r.getWidth();
-        const float y = r.getCentreY() - v * r.getHeight() * 0.48f;
-        if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+        const bool torn = corrupt > 0.0f && rng.nextFloat() < corrupt * 0.5f;
+        const float dx = torn ? (rng.nextFloat() - 0.5f) * 30.0f * corrupt : 0.0f;
+        const float dy = torn ? (rng.nextFloat() - 0.5f) * r.getHeight() * 0.4f * corrupt : 0.0f;
+        for (int i = s0; i < juce::jmin (n, s0 + slice + 1); ++i)
+        {
+            float v = juce::jlimit (-1.0f, 1.0f, buf[(size_t) ((writePos + i) % n)]);
+            if (torn && rng.nextFloat() < 0.3f) v = std::round (v * 4.0f) / 4.0f; // quantification « bitcrush » visuelle
+            const float x = r.getX() + (float) i / (float) (n - 1) * r.getWidth() + dx;
+            const float y = r.getCentreY() - v * r.getHeight() * 0.48f + dy;
+            if (i == s0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+        }
     }
-    g.setColour (Theme::blue.withAlpha (0.35f));
-    g.strokePath (p, juce::PathStrokeType (1.0f), juce::AffineTransform::translation (1.2f, 0.0f));
+    const float split = 1.2f + 5.0f * corrupt;
+    g.setColour (juce::Colour (0xffff1e3c).withAlpha (0.25f + 0.4f * corrupt));
+    g.strokePath (p, juce::PathStrokeType (1.0f), juce::AffineTransform::translation (-split, 0.0f));
+    g.setColour (Theme::blue.withAlpha (0.35f + 0.3f * corrupt));
+    g.strokePath (p, juce::PathStrokeType (1.0f), juce::AffineTransform::translation (split, 0.0f));
     g.setColour (Theme::accent);
     g.strokePath (p, juce::PathStrokeType (1.2f));
+    if (corrupt > 0.3f)
+        for (int k = 0; k < (int) (6 * corrupt); ++k)
+        {
+            g.setColour ((k % 2 ? Theme::accent : Theme::blue).withAlpha (0.3f * corrupt));
+            g.fillRect (r.getX() + rng.nextFloat() * r.getWidth(), r.getY() + rng.nextFloat() * r.getHeight(), 3.0f + rng.nextFloat() * 14.0f,
+                        1.0f + rng.nextFloat() * 3.0f);
+        }
     g.setFont (Theme::mono (9.0f));
     g.setColour (Theme::textDim);
     g.drawText ("VOIX " + juce::String (proc.activeVoices.load()) + "  CPU " + juce::String (juce::roundToInt (proc.cpuLoad.load() * 100.0f)) + "%",

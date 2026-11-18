@@ -19,7 +19,23 @@ de random, même DA, avec un moteur de synthèse en dessous. JUCE 8 / C++17 / CM
 | 6 | Jeu : arpé, séquenceur, **générateur de patterns MIDI**, gammes, mutation, export MIDI, Note Spray, micro-random | ✅ |
 | 7 | Random : niveaux, cadenas, seed, historique, morph pad, personnalités, garde-fous | ✅ |
 | 8 | Création : enregistreur, rolling recorder, Feed, export WAV, batch render, Draft/HQ | ✅ |
-| 9 | Finitions : DA complète, undo/redo, A/B, MIDI learn, optimisation | |
+| 9 | Finitions : DA complète, undo/redo, A/B, MIDI learn, optimisation | ✅ |
+
+## Raccourcis clavier
+
+| Touche | Action |
+|---|---|
+| Ctrl/Cmd + Z | annuler |
+| Ctrl/Cmd + Maj + Z, Ctrl + Y | rétablir |
+| Ctrl/Cmd + B | basculer A / B (clic droit sur A ou B : copier vers l'autre) |
+| Ctrl/Cmd + S | sauver le preset |
+| R / Maj + R | random général / revenir au tirage précédent |
+| ← / → | preset précédent / suivant |
+| F1 … F6 (ou Ctrl/Cmd + 1 … 6) | onglets |
+| Échap | fermer le navigateur / le panneau random |
+
+Clic droit sur un potard : cadenas et plage de random, **MIDI learn**, modulations.
+(Certaines DAW gardent des touches pour elles : clique d'abord dans le plugin.)
 
 ## Notes pour les phases à venir
 
@@ -32,8 +48,11 @@ Source/
   Core/     paramètres, utilitaires DSP (Dsp.h repris d'IDGems)
   Synth/    wavetables (usine, dé, sample -> wavetable), samples / multisamples, oscillateur
             (unison, warps, additif inharmonique), filtres, bruits, enveloppes, voix et polyphonie
-  State/    gestionnaire de presets (repris d'IDGems)
-  Engine/   chaîne de sortie (reprise d'IDGems : passe-haut, grave mono, OTT, soft clip, limiteur)
+  State/    presets, random (RandomEngine), undo / A-B, motion recording, rendu hors ligne (batch)
+  Modulation/ sources, connexions, LFO
+  Fx/       rack d'effets d'IDGems (bus A/B/C + Master)
+  Play/     arpège, séquenceur, générateur de patterns MIDI
+  Engine/   chaîne de sortie (reprise d'IDGems : passe-haut, grave mono, OTT, soft clip, limiteur), enregistreur
   UI/       thème et LookAndFeel (repris d'IDGems), potards, vues, pages
 Tests/      tests de stabilité (NaN, clics, plafond, Panic, état, CPU) + capture d'interface
 ```

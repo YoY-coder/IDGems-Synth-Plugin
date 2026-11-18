@@ -107,7 +107,8 @@ IDGemsSynthProcessor::IDGemsSynthProcessor()
     }
     modGlobal.init (apvts, modShared, modTargets);
     presets = std::make_unique<PresetManager> (*this);
-    startTimer (500);
+    for (int c = 0; c < 128; ++c) { ccMap[c] = -1; ccValue[c] = 0.0f; ccDirty[c] = false; }
+    startTimerHz (30);
 }
 
 IDGemsSynthProcessor::~IDGemsSynthProcessor() { stopTimer(); }
@@ -356,6 +357,24 @@ void IDGemsSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     if (n <= 0) return;
 
     keyboardState.processNextMidiBuffer (midi, 0, n, true);
+    // MIDI learn / contrôleurs reliés (appliqués aux paramètres par le timer, hors du thread audio)
+    for (const auto m : midi)
+    {
+        const auto msg = m.getMessage();
+        if (! msg.isController()) continue;
+        const int cc = msg.getControllerNumber();
+        if (const int learn = midiLearnParam.load (std::memory_order_relaxed); learn >= 0)
+        {
+            for (auto& c : ccMap) if (c.load (std::memory_order_relaxed) == learn) c.store (-1, std::memory_order_relaxed);
+            ccMap[cc].store (learn, std::memory_order_relaxed);
+            midiLearnParam.store (-1, std::memory_order_relaxed);
+        }
+        if (ccMap[cc].load (std::memory_order_relaxed) >= 0)
+        {
+            ccValue[cc].store ((float) msg.getControllerValue() / 127.0f, std::memory_order_relaxed);
+            ccDirty[cc].store (true, std::memory_order_release);
+        }
+    }
     readParams (vp);
     const float bendRange = std::round (raw.bendRange->load());
 
@@ -637,8 +656,21 @@ void IDGemsSynthProcessor::retire (std::shared_ptr<void> p)
     if (p != nullptr) retired.emplace_back (juce::Time::getMillisecondCounterHiRes(), std::move (p));
 }
 
+void IDGemsSynthProcessor::applyMidiControllers()
+{
+    // contrôleurs MIDI reliés -> paramètres
+    for (int c = 0; c < 128; ++c)
+        if (ccDirty[c].exchange (false, std::memory_order_acquire))
+        {
+            const int pi = ccMap[c].load();
+            if (pi >= 0 && pi < getParameters().size()) getParameters()[pi]->setValueNotifyingHost (ccValue[c].load());
+        }
+}
+
 void IDGemsSynthProcessor::timerCallback()
 {
+    applyMidiControllers();
+    if (++timerTicks % 15 != 0) return;
     // destruction différée des tables / samples remplacés (le thread audio ne les lit plus)
     const double now = juce::Time::getMillisecondCounterHiRes();
     retired.erase (std::remove_if (retired.begin(), retired.end(), [now] (auto& e) { return now - e.first > 2000.0; }), retired.end());
@@ -934,6 +966,12 @@ bool IDGemsSynthProcessor::busIsUsed (int bus) const
     return false;
 }
 
+idgs::UndoHistory& IDGemsSynthProcessor::undoHistory()
+{
+    if (undo == nullptr) undo = std::make_unique<idgs::UndoHistory> (*this);
+    return *undo;
+}
+
 idgs::MotionRecorder& IDGemsSynthProcessor::motionRecorder()
 {
     if (motion == nullptr) motion = std::make_unique<idgs::MotionRecorder> (*this);
@@ -1021,6 +1059,7 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree, bool keepA
                 rp->setValueNotifyingHost (rp->getDefaultValue());
     copy.removeChild (copy.getChildWithName ("RANDOM"), nullptr);
     copy.removeChild (copy.getChildWithName ("MOTION"), nullptr);
+    copy.removeChild (copy.getChildWithName ("MIDIMAP"), nullptr);
     apvts.replaceState (copy);
     if (keepAssets) return;
 
@@ -1102,6 +1141,10 @@ void IDGemsSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto state = captureState();
     if (random != nullptr) state.appendChild (random->toTree(), nullptr);
     if (motion != nullptr && motion->hasData()) state.appendChild (motion->toTree(), nullptr);
+    juce::ValueTree mm ("MIDIMAP");
+    for (int c = 0; c < 128; ++c)
+        if (const int pi = ccMap[c].load(); pi >= 0) mm.setProperty ("cc" + juce::String (c), modTargets.paramId (pi), nullptr);
+    if (mm.getNumProperties() > 0) state.appendChild (mm, nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -1112,6 +1155,11 @@ void IDGemsSynthProcessor::setStateInformation (const void* data, int sizeInByte
         auto tree = juce::ValueTree::fromXml (*xml);
         restoreState (tree);
         if (auto rt = tree.getChildWithName ("RANDOM"); rt.isValid() || random != nullptr) randomEngine().fromTree (rt);
+        {
+            auto mm = tree.getChildWithName ("MIDIMAP");
+            for (int c = 0; c < 128; ++c)
+                ccMap[c] = mm.hasProperty ("cc" + juce::String (c)) ? paramIndex (mm.getProperty ("cc" + juce::String (c)).toString()) : -1;
+        }
         if (auto mt = tree.getChildWithName ("MOTION"); mt.isValid() || motion != nullptr) motionRecorder().fromTree (mt);
         if (presets != nullptr && tree.hasProperty ("presetName")) presets->setCurrentName (tree.getProperty ("presetName").toString());
     }
