@@ -316,6 +316,12 @@ struct IDGemsSynthEditor::Content : public juce::Component, public juce::DragAnd
 IDGemsSynthEditor::IDGemsSynthEditor (IDGemsSynthProcessor& p)
     : AudioProcessorEditor (&p), proc (p)
 {
+    // taille mémorisée lue AVANT tout redimensionnement : setResizable / les limites déclenchent resized()
+    // qui écraserait la valeur sauvegardée (bug : la fenêtre rouvrait en petit)
+    float remembered = proc.editorScale.load();
+    if (remembered <= 0.0f)
+        if (auto* f = proc.appProps.getUserSettings()) remembered = (float) f->getDoubleValue ("uiScale", 0.85);
+    if (remembered <= 0.0f) remembered = 0.85f;
     setLookAndFeel (&lnf);
     content = std::make_unique<Content> (p);
     addAndMakeVisible (*content);
@@ -335,10 +341,10 @@ IDGemsSynthEditor::IDGemsSynthEditor (IDGemsSynthProcessor& p)
         c->setFixedAspectRatio ((double) baseW / baseH);
         c->setSizeLimits (baseW / 2, baseH / 2, baseW * 2, baseH * 2);
     }
-    float scale = 0.85f;
-    if (auto* f = proc.appProps.getUserSettings()) scale = (float) f->getDoubleValue ("uiScale", 0.85);
-    scale = juce::jlimit (0.5f, 2.0f, scale);
+    const float scale = juce::jlimit (0.5f, 2.0f, remembered);
     setSize ((int) (baseW * scale), (int) (baseH * scale));
+    sizeReady = true;
+    resized();
     startTimerHz (30);
 }
 
@@ -359,6 +365,8 @@ void IDGemsSynthEditor::resized()
 {
     const float s = (float) getWidth() / (float) baseW;
     content->setTransform (juce::AffineTransform::scale (s));
+    if (! sizeReady || getWidth() <= 0) return; // pas de sauvegarde pendant la mise en place
+    proc.editorScale.store (s);
     if (auto* f = proc.appProps.getUserSettings()) f->setValue ("uiScale", s);
 }
 

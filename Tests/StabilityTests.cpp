@@ -1405,6 +1405,31 @@ int main (int argc, char** argv)
         check (c.proc.ccForParam (pi) == 21, "MIDI learn : correspondance non restauree");
     }
 
+
+    // 28. Taille de la fenêtre : gardée à la réouverture et avec le projet
+    if (onlyTest == 0 || onlyTest == 28)
+    {
+        std::cout << "28. Taille de la fenetre (fermer / rouvrir, projet)..." << std::endl;
+        Harness h;
+        const int w = (int) (IDGemsSynthEditor::baseW * 1.3), hh = (int) (IDGemsSynthEditor::baseH * 1.3);
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> ed (h.proc.createEditor());
+            ed->setSize (w, hh);
+        }
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> ed (h.proc.createEditor());
+            check (std::abs (ed->getWidth() - w) <= 2, "fenetre rouverte : largeur " + juce::String (ed->getWidth()) + " au lieu de " + juce::String (w));
+        }
+        juce::MemoryBlock mb;
+        h.proc.getStateInformation (mb);
+        Harness c;
+        c.proc.setStateInformation (mb.getData(), (int) mb.getSize());
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> ed (c.proc.createEditor());
+            check (std::abs (ed->getWidth() - w) <= 2, "projet recharge : largeur " + juce::String (ed->getWidth()) + " au lieu de " + juce::String (w));
+        }
+    }
+
     std::cout << (failures == 0 ? "=== TOUS LES TESTS PASSENT ===" : "=== " + juce::String (failures).toStdString() + " ECHEC(S) ===") << std::endl;
     return failures == 0 ? 0 : 1;
 }

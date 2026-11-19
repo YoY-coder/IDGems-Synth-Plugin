@@ -1060,6 +1060,7 @@ void IDGemsSynthProcessor::restoreState (const juce::ValueTree& tree, bool keepA
     copy.removeChild (copy.getChildWithName ("RANDOM"), nullptr);
     copy.removeChild (copy.getChildWithName ("MOTION"), nullptr);
     copy.removeChild (copy.getChildWithName ("MIDIMAP"), nullptr);
+    copy.removeProperty ("uiScale", nullptr);
     apvts.replaceState (copy);
     if (keepAssets) return;
 
@@ -1139,6 +1140,7 @@ void IDGemsSynthProcessor::resetToInit()
 void IDGemsSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = captureState();
+    if (editorScale.load() > 0.0f) state.setProperty ("uiScale", editorScale.load(), nullptr);
     if (random != nullptr) state.appendChild (random->toTree(), nullptr);
     if (motion != nullptr && motion->hasData()) state.appendChild (motion->toTree(), nullptr);
     juce::ValueTree mm ("MIDIMAP");
@@ -1154,6 +1156,7 @@ void IDGemsSynthProcessor::setStateInformation (const void* data, int sizeInByte
     {
         auto tree = juce::ValueTree::fromXml (*xml);
         restoreState (tree);
+        if (tree.hasProperty ("uiScale")) editorScale.store (juce::jlimit (0.5f, 2.0f, (float) tree.getProperty ("uiScale")));
         if (auto rt = tree.getChildWithName ("RANDOM"); rt.isValid() || random != nullptr) randomEngine().fromTree (rt);
         {
             auto mm = tree.getChildWithName ("MIDIMAP");

@@ -35,6 +35,7 @@ private:
     idg::ui::IDGLookAndFeel lnf;
     std::unique_ptr<Content> content;
     std::unique_ptr<juce::TooltipWindow> tooltip;
+    bool sizeReady = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (IDGemsSynthEditor)
 };

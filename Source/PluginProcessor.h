@@ -113,7 +113,9 @@ public:
     int paramIndex (const juce::String& id) const { return modTargets.paramIndexForId (id); }
     double getBpm() const { return uiBpm.load(); }
     juce::MidiKeyboardState keyboardState;   // clavier à l'écran
-    juce::ApplicationProperties appProps;    // réglages de l'interface (taille, auteur...)
+    juce::ApplicationProperties appProps;
+    /** Échelle de la fenêtre (survit à la fermeture de la fenêtre et est sauvée avec le projet ; -1 = inconnue). */
+    std::atomic<float> editorScale { -1.0f };    // réglages de l'interface (taille, auteur...)
     std::unique_ptr<idgs::PresetManager> presets;
 
     // ---- Bus d'effets (A, B, C, Master) : racks repris d'IDGems
